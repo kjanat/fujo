@@ -3,14 +3,49 @@ use crate::completion::Shell;
 use crate::schema::InputSchema;
 use dreamcli_core::command::ProgramSchema;
 use dreamcli_output::visible_width;
+use std::sync::Arc;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, Default)]
+pub enum FlagOrder {
+    #[default]
+    Alphabetical,
+    Declaration,
+}
+type FlagComparator = Arc<dyn Fn(&str, &str) -> std::cmp::Ordering + Send + Sync>;
+
+#[derive(Clone)]
 pub struct HelpOptions {
     pub width: usize,
+    pub case_parity: bool,
+    pub flag_order: FlagOrder,
+    pub sort_flags: Option<FlagComparator>,
+}
+impl std::fmt::Debug for HelpOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HelpOptions")
+            .field("width", &self.width)
+            .field("case_parity", &self.case_parity)
+            .field("flag_order", &self.flag_order)
+            .finish_non_exhaustive()
+    }
+}
+impl HelpOptions {
+    pub fn sort_flags(
+        mut self,
+        compare: impl Fn(&str, &str) -> std::cmp::Ordering + Send + Sync + 'static,
+    ) -> Self {
+        self.sort_flags = Some(Arc::new(compare));
+        self
+    }
 }
 impl Default for HelpOptions {
     fn default() -> Self {
-        Self { width: 80 }
+        Self {
+            width: 80,
+            case_parity: true,
+            flag_order: FlagOrder::default(),
+            sort_flags: None,
+        }
     }
 }
 
@@ -60,6 +95,20 @@ pub fn command_help(
     options: &HelpOptions,
     program: Option<&ProgramSchema>,
 ) -> String {
+    let mut flags: Vec<_> = command.flags.iter().filter(|f| !f.hidden).collect();
+    if let Some(compare) = &options.sort_flags {
+        flags.sort_by(|a, b| compare(&a.name, &b.name));
+    } else if matches!(options.flag_order, FlagOrder::Alphabetical) {
+        flags.sort_by_key(|flag| {
+            (
+                !flag
+                    .aliases
+                    .iter()
+                    .any(|a| !a.hidden && a.name.chars().count() == 1),
+                flag.name.as_str(),
+            )
+        });
+    }
     let mut text = format!("{bin}\n");
     if !command.description.is_empty() {
         text.push_str(&format!(
@@ -106,10 +155,8 @@ pub fn command_help(
     entries(
         &mut text,
         "Options",
-        command
-            .flags
-            .iter()
-            .filter(|f| !f.hidden)
+        flags
+            .into_iter()
             .map(|flag| {
                 let names = flag
                     .aliases
@@ -126,7 +173,15 @@ pub fn command_help(
                             a.name
                         )
                     })
-                    .chain(std::iter::once(format!("--{}", kebab(&flag.name))))
+                    .chain(std::iter::once(format!("--{}", {
+                        crate::parse::canonical_flag_name(
+                            flag,
+                            &command.flags,
+                            crate::parse::ParseOptions {
+                                case_parity: options.case_parity,
+                            },
+                        )
+                    })))
                     .chain(flag.negated_name.as_ref().map(|n| format!("--{n}")))
                     .collect::<Vec<_>>()
                     .join(", ");
@@ -205,10 +260,20 @@ fn description(input: &InputSchema) -> String {
     if !input.env_vars.is_empty() {
         notes.push(format!("env: {}", input.env_vars.join(", ")));
     }
-    if let Some(default) = &input.default_value
-        && !input.sensitive
-    {
-        notes.push(format!("default: {default}"));
+    if input.has_default() {
+        match &input.default_description {
+            Some(crate::schema::DefaultDescription::Text(text)) => {
+                notes.push(format!("default: {text}"))
+            }
+            Some(crate::schema::DefaultDescription::Hidden) => {}
+            None => {
+                if let Some(default) = &input.default_value
+                    && !input.sensitive
+                {
+                    notes.push(format!("default: {default}"));
+                }
+            }
+        }
     }
     if input.deprecated.is_some() {
         notes.push("deprecated".into());
@@ -278,19 +343,4 @@ pub fn shell_from_path(path: &str) -> Option<Shell> {
         .to_str()?
         .parse()
         .ok()
-}
-
-fn kebab(name: &str) -> String {
-    let mut output = String::new();
-    let mut previous = None;
-    for c in name.chars() {
-        if c.is_ascii_uppercase()
-            && previous.is_some_and(|p: char| p.is_ascii_lowercase() || p.is_ascii_digit())
-        {
-            output.push('-');
-        }
-        output.extend(c.to_lowercase());
-        previous = Some(c);
-    }
-    output
 }

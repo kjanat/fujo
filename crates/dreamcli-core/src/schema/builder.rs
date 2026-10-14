@@ -87,7 +87,7 @@ impl<T, P, S> Clone for Input<T, P, S> {
     }
 }
 impl<T, P, S> Input<T, P, S> {
-    fn from_schema(schema: InputSchema) -> Self {
+    pub(super) fn from_schema(schema: InputSchema) -> Self {
         Self {
             schema,
             marker: PhantomData,
@@ -103,75 +103,96 @@ impl<T, P, S> Input<T, P, S> {
         &self.schema.name
     }
     pub fn describe(mut self, description: impl Into<String>) -> Self {
-        self.schema.description = description.into();
+        self.schema.declaration.description = description.into();
         self
     }
-    pub fn alias(mut self, alias: impl Into<String>) -> Self {
-        self.schema.aliases.push(Alias {
-            name: alias.into(),
-            hidden: false,
-        });
-        self
-    }
-    pub fn hidden_alias(mut self, alias: impl Into<String>) -> Self {
-        self.schema.aliases.push(Alias {
-            name: alias.into(),
-            hidden: true,
-        });
-        self
-    }
+
     pub fn env(mut self, name: impl Into<String>) -> Self {
-        self.schema.env_vars.push(name.into());
+        self.schema.declaration.env_vars.push(name.into());
         self
     }
     pub fn config(mut self, path: impl Into<String>) -> Self {
-        self.schema.config_path = Some(path.into());
+        self.schema.declaration.config_path = Some(path.into());
         self
     }
     pub fn stdin(self) -> Self {
         self.stdin_with(StdinBinding::default())
     }
     pub fn stdin_with(mut self, binding: StdinBinding) -> Self {
-        self.schema.stdin = Some(binding);
+        self.schema.declaration.stdin = Some(binding);
         self
     }
     pub fn prompt(mut self, prompt: Prompt) -> Self {
-        self.schema.prompt = Some(prompt);
+        self.schema.declaration.prompt = Some(prompt);
         self
     }
     pub fn hidden(mut self) -> Self {
-        self.schema.hidden = true;
+        self.schema.declaration.hidden = true;
         self
     }
     pub fn sensitive(mut self) -> Self {
-        self.schema.sensitive = true;
+        self.schema.declaration.sensitive = true;
         self
     }
     pub fn deprecated(mut self, message: impl Into<String>) -> Self {
-        self.schema.deprecated = Some(message.into());
+        self.schema.declaration.deprecated = Some(message.into());
         self
     }
     pub fn value_hint(mut self, hint: impl Into<String>) -> Self {
-        self.schema.value_hint = Some(hint.into());
+        self.schema.declaration.value_hint = Some(hint.into());
         self
+    }
+    /// Supply the JSON representation without requiring Serde on the native type.
+    pub fn encode_json(mut self, encode: impl Fn(&T) -> Value + Send + Sync + 'static) -> Self
+    where
+        T: Send + Sync + 'static,
+    {
+        if self.schema.validation_encoder.is_none() {
+            self.schema.validation_encoder = self.schema.encoder.clone();
+        }
+        self.schema.encoder = Some(Arc::new(move |native| {
+            native.inner.downcast_ref::<T>().map(&encode)
+        }));
+        if let Some(default) = &mut self.schema.native_default {
+            default.json = self
+                .schema
+                .encoder
+                .as_ref()
+                .and_then(|encode| encode(default));
+            self.schema.declaration.default_value = default.json.clone();
+        }
+        self
+    }
+    pub fn json_schema(mut self, schema: Value) -> Self {
+        self.schema.declaration.json_schema = Some(schema);
+        self
+    }
+    pub fn default_description(mut self, description: impl Into<DefaultDescription>) -> Self {
+        self.schema.declaration.default_description = Some(description.into());
+        self
+    }
+    pub fn hide_default(self) -> Self {
+        self.default_description(DefaultDescription::Hidden)
     }
     pub fn choices(mut self, choices: impl IntoIterator<Item = impl Into<String>>) -> Self {
-        self.schema.enum_values = choices.into_iter().map(Into::into).collect();
+        if self.schema.kind == Kind::String {
+            self.schema.declaration.kind = Kind::Enum;
+        }
+        self.schema.declaration.enum_values = choices.into_iter().map(Into::into).collect();
         self
     }
-    pub fn duplicate(mut self, policy: DuplicatePolicy) -> Self {
-        self.schema.duplicate = policy;
-        self
-    }
+
     pub fn required(mut self) -> Input<T, Required, S> {
-        self.schema.required = true;
+        self.schema.declaration.default_description = None;
+        self.schema.declaration.required = true;
         self.schema.native_default = None;
-        self.schema.default_value = None;
+        self.schema.declaration.default_value = None;
         Input::from_schema(self.schema)
     }
     pub fn optional(mut self) -> Input<T, Optional, S> {
-        self.schema.required = false;
-        self.schema.default_value = None;
+        self.schema.declaration.default_description = None;
+        self.schema.declaration.required = false;
+        self.schema.declaration.default_value = None;
         self.schema.native_default = None;
         Input::from_schema(self.schema)
     }
@@ -179,14 +200,15 @@ impl<T, P, S> Input<T, P, S> {
     where
         T: Send + Sync + 'static,
     {
-        self.schema.required = false;
+        self.schema.declaration.required = false;
+        self.schema.declaration.default_description = None;
         let mut native = NativeValue::new(value);
         native.json = self
             .schema
             .encoder
             .as_ref()
             .and_then(|encode| encode(&native));
-        self.schema.default_value = native.json.clone();
+        self.schema.declaration.default_value = native.json.clone();
         self.schema.native_default = Some(native);
         Input::from_schema(self.schema)
     }
@@ -199,36 +221,72 @@ impl<T, P, S> Input<T, P, S> {
             .push(Arc::new(move |v| validator(v.downcast_ref::<T>()?)));
         self
     }
-    pub fn separator(mut self, separator: impl Into<String>) -> Self {
-        self.schema.cli_split = Split::Delimiter(separator.into());
+}
+
+impl<T, P> Input<T, P, FlagMarker> {
+    pub fn alias(mut self, alias: impl Into<String>) -> Self {
+        self.schema.declaration.aliases.push(Alias {
+            name: alias.into(),
+            hidden: false,
+        });
         self
     }
-    pub fn split_cli(mut self, split: Split) -> Self {
-        self.schema.cli_split = split;
+    pub fn hidden_alias(mut self, alias: impl Into<String>) -> Self {
+        self.schema.declaration.aliases.push(Alias {
+            name: alias.into(),
+            hidden: true,
+        });
         self
     }
-    pub fn split_env(mut self, split: Split) -> Self {
-        self.schema.env_split = split;
-        self
-    }
-    pub fn split_stdin(mut self, split: Split) -> Self {
-        self.schema.stdin_split = split;
-        self
-    }
-    pub fn unique(mut self) -> Self {
-        self.schema.unique = true;
-        self
-    }
-    pub fn duplicate_keys(mut self, policy: DuplicatePolicy) -> Self {
-        self.schema.duplicate_keys = policy;
+    pub fn duplicate(mut self, policy: DuplicatePolicy) -> Self {
+        self.schema.declaration.duplicate = policy;
         self
     }
     pub fn propagate(mut self) -> Self {
-        self.schema.propagate = true;
+        self.schema.declaration.propagate = true;
         self
     }
 }
 
+mod sealed {
+    pub trait Collection {}
+    impl<T> Collection for Vec<T> {}
+    impl<T> Collection for std::collections::BTreeMap<String, T> {}
+}
+/// Collection values support delimiter and source-specific splitting.
+pub trait Collection: sealed::Collection {}
+impl<T> Collection for Vec<T> {}
+impl<T> Collection for BTreeMap<String, T> {}
+impl<T: Collection, P, S> Input<T, P, S> {
+    pub fn separator(mut self, separator: impl Into<String>) -> Self {
+        self.schema.declaration.cli_split = Split::Delimiter(separator.into());
+        self
+    }
+    pub fn split_cli(mut self, split: Split) -> Self {
+        self.schema.declaration.cli_split = split;
+        self
+    }
+    pub fn split_env(mut self, split: Split) -> Self {
+        self.schema.declaration.env_split = split;
+        self
+    }
+    pub fn split_stdin(mut self, split: Split) -> Self {
+        self.schema.declaration.stdin_split = split;
+        self
+    }
+}
+impl<T, P, S> Input<Vec<T>, P, S> {
+    pub fn unique(mut self) -> Self {
+        self.schema.declaration.unique = true;
+        self
+    }
+}
+impl<T, P, S> Input<BTreeMap<String, T>, P, S> {
+    pub fn duplicate_keys(mut self, policy: DuplicatePolicy) -> Self {
+        self.schema.declaration.duplicate_keys = policy;
+        self
+    }
+}
 impl<T, P> Input<T, P, ArgMarker> {
     pub fn variadic(self) -> Input<Vec<T>, P, ArgMarker>
     where
@@ -236,77 +294,74 @@ impl<T, P> Input<T, P, ArgMarker> {
     {
         let original = self.schema;
         let mut schema = collection_schema::<T>(&original.name, Kind::Array, original.clone());
-        schema.surface = Surface::Arg;
-        schema.required = original.required;
-        schema.description = original.description;
-        schema.env_vars = original.env_vars;
-        schema.config_path = original.config_path;
-        schema.stdin = original.stdin;
-        schema.prompt = original.prompt;
-        schema.cli_split = original.cli_split;
-        schema.env_split = original.env_split;
-        schema.stdin_split = original.stdin_split;
-        schema.variadic = true;
-        schema.sensitive = original.sensitive;
+        schema.declaration.surface = Surface::Arg;
+        let original = original.declaration;
+        schema.declaration.required = original.required;
+        schema.declaration.description = original.description;
+        schema.declaration.env_vars = original.env_vars;
+        schema.declaration.config_path = original.config_path;
+        schema.declaration.stdin = original.stdin;
+        schema.declaration.prompt = original.prompt;
+        schema.declaration.cli_split = original.cli_split;
+        schema.declaration.env_split = original.env_split;
+        schema.declaration.stdin_split = original.stdin_split;
+        schema.declaration.variadic = true;
+        schema.declaration.sensitive = original.sensitive;
         Input::from_schema(schema)
     }
 }
 
 impl<P, S> Input<String, P, S> {
     pub fn non_empty(mut self) -> Self {
-        self.schema.non_empty = true;
+        self.schema.declaration.non_empty = true;
         self
     }
     pub fn min_length(mut self, min: usize) -> Self {
-        self.schema.min_length = Some(min);
+        self.schema.declaration.min_length = Some(min);
         self
     }
     pub fn max_length(mut self, max: usize) -> Self {
-        self.schema.max_length = Some(max);
+        self.schema.declaration.max_length = Some(max);
         self
     }
     pub fn pattern(mut self, pattern: impl Into<String>) -> Self {
-        self.schema.pattern = Some(pattern.into());
-        self
-    }
-    pub fn path_checks(mut self, checks: PathChecks) -> Self {
-        self.schema.path_checks = Some(checks);
+        self.schema.declaration.pattern = Some(pattern.into());
         self
     }
 }
 impl<P, S> Input<std::path::PathBuf, P, S> {
     pub fn path_checks(mut self, checks: PathChecks) -> Self {
-        self.schema.path_checks = Some(checks);
+        self.schema.declaration.path_checks = Some(checks);
         self
     }
 }
 impl<P, S> Input<f64, P, S> {
     pub fn min(mut self, min: f64) -> Self {
-        self.schema.min = Some(min);
+        self.schema.declaration.min = Some(min);
         self
     }
     pub fn max(mut self, max: f64) -> Self {
-        self.schema.max = Some(max);
+        self.schema.declaration.max = Some(max);
         self
     }
     pub fn integer(mut self) -> Self {
-        self.schema.integer = true;
+        self.schema.declaration.integer = true;
         self
     }
 }
 impl<P> Input<bool, P, FlagMarker> {
     pub fn negatable(mut self) -> Self {
-        self.schema.negated_name = Some(format!("no-{}", self.schema.name));
+        self.schema.declaration.negated_name = Some(format!("no-{}", self.schema.name));
         self
     }
     pub fn negated_name(mut self, name: impl Into<String>) -> Self {
-        self.schema.negated_name = Some(name.into());
+        self.schema.declaration.negated_name = Some(name.into());
         self
     }
 }
 impl<P, S> Input<url::Url, P, S> {
     pub fn protocols(mut self, protocols: impl IntoIterator<Item = impl Into<String>>) -> Self {
-        self.schema.protocols = protocols.into_iter().map(Into::into).collect();
+        self.schema.declaration.protocols = protocols.into_iter().map(Into::into).collect();
         self
     }
 }
@@ -348,24 +403,24 @@ pub mod flag {
         choices: impl IntoIterator<Item = impl Into<String>>,
     ) -> Input<String> {
         let mut schema = InputSchema::new(name, Kind::Enum, Surface::Flag);
-        schema.enum_values = choices.into_iter().map(Into::into).collect();
+        schema.declaration.enum_values = choices.into_iter().map(Into::into).collect();
         Input::from_schema(typed_schema::<String>(schema))
     }
-    pub fn array<T: Clone + Send + Sync + 'static, P>(
+    pub fn array<T: Clone + Send + Sync + 'static>(
         name: &str,
-        element: Input<T, P>,
+        element: super::value::ValueParser<T>,
     ) -> Input<Vec<T>, Required> {
         Input::<Vec<T>>::from_schema(collection_schema::<T>(name, Kind::Array, element.schema))
             .default(vec![])
     }
     pub fn key_value(name: &str) -> Input<BTreeMap<String, String>, Required> {
-        let mut element = string("value");
-        element.schema.strict_string = true;
+        let mut element = super::value::string();
+        element.schema.declaration.strict_string = true;
         key_value_of(name, element).default(BTreeMap::new())
     }
-    pub fn key_value_of<T: Clone + Send + Sync + 'static, P>(
+    pub fn key_value_of<T: Clone + Send + Sync + 'static>(
         name: &str,
-        element: Input<T, P>,
+        element: super::value::ValueParser<T>,
     ) -> Input<BTreeMap<String, T>> {
         Input::from_schema(collection_schema::<T>(name, Kind::KeyValue, element.schema))
     }
@@ -385,7 +440,7 @@ pub mod flag {
         T: std::str::FromStr + Send + Sync + 'static,
         T::Err: std::fmt::Display,
     {
-        custom(name, |raw| {
+        let mut input = custom(name, |raw| {
             let text = if let Some(text) = raw.as_str() {
                 text.to_owned()
             } else if raw.is_number() || raw.is_boolean() {
@@ -398,7 +453,12 @@ pub mod flag {
             };
             text.parse::<T>()
                 .map_err(|e| CliError::validation("CONSTRAINT_VIOLATED", e.to_string()))
-        })
+        });
+        input.schema.encoder = Some(Arc::new(|native| {
+            crate::value::primitive_json(native.inner.as_ref())
+        }));
+        input.schema.declaration.json_schema = crate::value::primitive_schema::<T>();
+        input
     }
     pub fn url(name: &str) -> Input<url::Url> {
         Input::from_schema(typed_schema::<url::Url>(InputSchema::new(
@@ -475,10 +535,10 @@ pub mod flag {
 pub mod arg {
     use super::*;
     fn positional<T, P>(mut flag: Input<T, P>) -> Input<T, Required, ArgMarker> {
-        flag.schema.surface = Surface::Arg;
-        flag.schema.required = true;
+        flag.schema.declaration.surface = Surface::Arg;
+        flag.schema.declaration.required = true;
         flag.schema.native_default = None;
-        flag.schema.default_value = None;
+        flag.schema.declaration.default_value = None;
         Input::from_schema(flag.schema)
     }
     pub fn string(name: &str) -> Input<String, Required, ArgMarker> {
@@ -489,7 +549,7 @@ pub mod arg {
     }
     pub fn boolean(name: &str) -> Input<bool, Required, ArgMarker> {
         let mut schema = InputSchema::new(name, Kind::Boolean, Surface::Arg);
-        schema.required = true;
+        schema.declaration.required = true;
         Input::from_schema(typed_schema::<bool>(schema))
     }
     pub fn enumeration(
@@ -534,7 +594,7 @@ pub mod arg {
 impl<T, P> Input<BTreeMap<String, T>, P, ArgMarker> {
     /// Consume the positional tail as entries, folding it into one native map.
     pub fn variadic_entries(mut self) -> Self {
-        self.schema.variadic = true;
+        self.schema.declaration.variadic = true;
         self
     }
 }

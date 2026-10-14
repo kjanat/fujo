@@ -71,6 +71,27 @@ pub trait FileSystem: Send + Sync {
 }
 pub type Interactive =
     Arc<dyn Fn(&Resolved) -> Result<BTreeMap<String, Option<crate::prompt::Prompt>>> + Send + Sync>;
+/// Available checks run by default; skipped checks remain observable.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum CheckPolicy {
+    #[default]
+    Available,
+    Required,
+    Disabled,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SkipReason {
+    MissingFilesystem,
+    Disabled,
+}
+#[derive(Debug, Clone, Serialize)]
+pub struct SkippedCheck {
+    pub name: String,
+    pub surface: Surface,
+    pub checks: crate::schema::PathChecks,
+    pub reason: SkipReason,
+}
 #[derive(Clone, Default)]
 pub struct ResolveOptions {
     pub env: BTreeMap<String, String>,
@@ -78,6 +99,7 @@ pub struct ResolveOptions {
     pub stdin: Option<String>,
     pub prompter: Option<Arc<dyn PromptEngine>>,
     pub filesystem: Option<Arc<dyn FileSystem>>,
+    pub filesystem_policy: CheckPolicy,
     pub interactive: Option<Interactive>,
 }
 #[derive(Debug, Clone, Default)]
@@ -86,6 +108,7 @@ pub struct Resolved {
     pub args: BTreeMap<String, NativeValue>,
     pub sources: InputSources,
     pub deprecations: Vec<String>,
+    pub skipped_checks: Vec<SkippedCheck>,
 }
 impl Resolved {
     pub fn get<T: Clone + Send + Sync + 'static, P: Presence<T>, S>(
@@ -153,7 +176,13 @@ pub fn resolve(
             Surface::Arg => &parsed.arg_occurrences,
         }
         .get(&input.name);
-        match resolve_input(input, occurrences.map(Vec::as_slice), options, false) {
+        match resolve_input(
+            input,
+            occurrences.map(Vec::as_slice),
+            options,
+            false,
+            &mut resolved.skipped_checks,
+        ) {
             Ok(Some((value, source))) => {
                 record(&mut resolved, input, value, source);
             }
@@ -188,9 +217,9 @@ pub fn resolve(
         if input.surface == Surface::Flag
             && let Some(prompt) = interactive.get(&input.name)
         {
-            input.prompt = prompt.clone();
+            input.declaration.prompt = prompt.clone();
         }
-        match resolve_input(&input, None, options, true) {
+        match resolve_input(&input, None, options, true, &mut resolved.skipped_checks) {
             Ok(Some((value, source))) => record(&mut resolved, &input, value, source),
             Ok(None) => {}
             Err(error) => {
@@ -241,6 +270,7 @@ fn resolve_input(
     occurrences: Option<&[Occurrence]>,
     options: &ResolveOptions,
     later: bool,
+    skipped: &mut Vec<SkippedCheck>,
 ) -> Result<Option<(NativeValue, Provenance)>> {
     let mut selected = None;
     if let Some(occurrences) = occurrences {
@@ -338,27 +368,25 @@ fn resolve_input(
                 .map(|v| crate::prompt::Choice::new(v.as_str(), v))
                 .collect();
         }
-        if let Some(value) = engine.prompt(&prompt)? {
-            if !prompt.choices.is_empty() {
-                let values = if prompt.kind == PromptKind::Multiselect {
-                    value
-                        .as_array()
-                        .cloned()
-                        .unwrap_or_else(|| vec![value.clone()])
-                } else {
-                    vec![value.clone()]
-                };
-                if values
-                    .iter()
-                    .any(|v| !prompt.choices.iter().any(|c| c.value == *v))
+        prompt.validate_definition()?;
+        let answer = loop {
+            let raw = match engine.prompt(&prompt) {
+                Ok(value) => value,
+                Err(error)
+                    if error.name == crate::error::ErrorKind::Validation
+                        && engine.retry(&error) =>
                 {
-                    return Err(input.failure(
-                        "CONSTRAINT_VIOLATED",
-                        "Answer is not a prompt choice",
-                        false,
-                    ));
+                    continue;
                 }
+                Err(error) => return Err(error),
+            };
+            match prompt.normalize_answer(raw) {
+                Ok(value) => break value,
+                Err(error) if engine.retry(&error) => continue,
+                Err(_) => break None,
             }
+        };
+        if let Some(value) = answer {
             selected = Some((
                 coerce(input, value, &input.env_split, Stage::Prompt)?,
                 Provenance::at(Stage::Prompt),
@@ -366,19 +394,22 @@ fn resolve_input(
         }
     }
     let (native, source) = if let Some((value, source)) = selected {
-        validate_paths(input, &value, options)?;
-        let native = input
+        validate_paths(input, &value, options, skipped)?;
+        let mut native = input
             .native_decoder
             .as_ref()
             .ok_or_else(|| CliError::new("INVALID_SCHEMA", "Missing native codec"))?(
             &value
         )
         .map_err(|e| input.failure(&e.code, &e.message, source.stage == Stage::Cli))?;
+        if let Some(encode) = &input.encoder {
+            native.json = encode(&native);
+        }
         (native, source)
     } else if let Some(default) = &input.native_default {
-        if let Some(value) = default.json() {
-            validate_default(input, value)?;
-            validate_paths(input, value, options)?;
+        if let Some(value) = input.default_validation_json(default) {
+            validate_default(input, &value)?;
+            validate_paths(input, &value, options, skipped)?;
         }
         (default.clone(), Provenance::at(Stage::Default))
     } else if input.required {
@@ -404,11 +435,7 @@ pub(crate) fn validate_default(input: &InputSchema, value: &Value) -> Result<()>
             .as_array()
             .ok_or_else(|| input.failure("TYPE_MISMATCH", "Expected an array default", false))?;
         for value in array {
-            input
-                .element
-                .as_deref()
-                .expect("array element")
-                .decode_scalar(value.clone(), Stage::Default)?;
+            validate_default(input.element.as_deref().expect("array element"), value)?;
         }
         input.validate_scalar(value)
     } else if input.kind == Kind::KeyValue {
@@ -416,13 +443,15 @@ pub(crate) fn validate_default(input: &InputSchema, value: &Value) -> Result<()>
             .as_object()
             .ok_or_else(|| input.failure("TYPE_MISMATCH", "Expected an entry default", false))?;
         for value in values.values() {
-            input
-                .element
-                .as_deref()
-                .expect("entry element")
-                .decode_scalar(value.clone(), Stage::Default)?;
+            validate_default(input.element.as_deref().expect("entry element"), value)?;
         }
         input.validate_scalar(value)
+    } else if input.kind == Kind::Custom && !value.is_string() {
+        let mut native_shape = input.clone();
+        native_shape.declaration.enum_values.clear();
+        native_shape
+            .decode_scalar(value.clone(), Stage::Default)
+            .map(|_| ())
     } else {
         input
             .decode_scalar(value.clone(), Stage::Default)
@@ -557,9 +586,44 @@ fn collection_text(
         .collect()
 }
 
-fn validate_paths(input: &InputSchema, value: &Value, options: &ResolveOptions) -> Result<()> {
+fn validate_paths(
+    input: &InputSchema,
+    value: &Value,
+    options: &ResolveOptions,
+    skipped: &mut Vec<SkippedCheck>,
+) -> Result<()> {
     let element = input.element.as_deref().unwrap_or(input);
-    let (Some(checks), Some(fs)) = (&element.path_checks, &options.filesystem) else {
+    let Some(checks) = &element.path_checks else {
+        return Ok(());
+    };
+    if !checks.must_exist && checks.path_type.is_none() && !checks.create {
+        return Ok(());
+    }
+    let fs = if options.filesystem_policy == CheckPolicy::Disabled {
+        None
+    } else {
+        options.filesystem.as_ref()
+    };
+    let Some(fs) = fs else {
+        if options.filesystem_policy == CheckPolicy::Required {
+            return Err(CliError::new(
+                "MISSING_CAPABILITY",
+                format!(
+                    "Filesystem validation for {} requires a filesystem",
+                    input.display_name()
+                ),
+            ));
+        }
+        skipped.push(SkippedCheck {
+            name: input.name.clone(),
+            surface: input.surface,
+            checks: checks.clone(),
+            reason: if options.filesystem_policy == CheckPolicy::Disabled {
+                SkipReason::Disabled
+            } else {
+                SkipReason::MissingFilesystem
+            },
+        });
         return Ok(());
     };
     let values = match value {

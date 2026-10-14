@@ -7,6 +7,7 @@ use dreamcli::resolve::ResolveOptions;
 use dreamcli::resolve::resolve;
 use dreamcli::schema::Kind;
 use dreamcli::schema::StdinBinding;
+use dreamcli::value;
 use serde_json::json;
 
 fn schema(name: &str) -> dreamcli::Command {
@@ -33,7 +34,7 @@ fn schema(name: &str) -> dreamcli::Command {
                     .config("app.region"),
             )
             .flag(
-                flag::array("tag", flag::string("value"))
+                flag::array("tag", value::string())
                     .separator(",")
                     .unique()
                     .env("TAGS"),
@@ -54,17 +55,13 @@ fn schema(name: &str) -> dreamcli::Command {
                 .env("TEXT")
                 .default("default".into()),
         ),
-        "list" => command("list").flag(
-            flag::array("tag", flag::string("value"))
-                .stdin()
-                .env("TAGS"),
-        ),
+        "list" => command("list").flag(flag::array("tag", value::string()).stdin().env("TAGS")),
         "trim" => command("trim").arg(arg::string("path").stdin_with(StdinBinding {
             trim: true,
             ..Default::default()
         })),
         "arraysjson" => command("arraysjson").flag(
-            flag::array("value", flag::number("element"))
+            flag::array("value", value::number())
                 .env("VALUE")
                 .config("value")
                 .stdin()
@@ -72,7 +69,7 @@ fn schema(name: &str) -> dreamcli::Command {
                 .split_stdin(dreamcli::schema::Split::Json),
         ),
         "entriesjson" => command("entriesjson").flag(
-            flag::key_value_of("value", flag::number("element"))
+            flag::key_value_of("value", value::number())
                 .default(Default::default())
                 .env("VALUE")
                 .config("value")

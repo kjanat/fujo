@@ -172,9 +172,35 @@ pub(crate) type Encoder = Arc<dyn Fn(&NativeValue) -> Option<Value> + Send + Syn
 pub(crate) type Validator = Arc<dyn Fn(&Value) -> Result<()> + Send + Sync>;
 
 /// Serializable input declaration. Custom code is retained separately from metadata.
+///
+/// ```compile_fail
+/// use dreamcli_core::schema::{flag, Kind};
+/// let mut schema = flag::string("name").into_schema();
+/// schema.kind = Kind::Number;
+/// ```
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InputSchema {
+    #[serde(flatten)]
+    pub(crate) declaration: InputDeclaration,
+    #[serde(skip)]
+    pub(crate) native_decoder: Option<NativeDecoder>,
+    #[serde(skip)]
+    pub(crate) native_default: Option<NativeValue>,
+    #[serde(skip)]
+    pub(crate) native_validators: Vec<NativeValidator>,
+    #[serde(skip)]
+    pub(crate) encoder: Option<Encoder>,
+    #[serde(skip)]
+    pub(crate) validation_encoder: Option<Encoder>,
+    #[serde(skip)]
+    pub(crate) validators: Vec<Validator>,
+}
+
+/// Read-only metadata shared by parsers, completion generators, and renderers.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InputDeclaration {
     pub name: String,
     pub surface: Surface,
     pub kind: Kind,
@@ -212,16 +238,42 @@ pub struct InputSchema {
     pub path_checks: Option<PathChecks>,
     pub value_hint: Option<String>,
     pub element: Option<Box<InputSchema>>,
-    #[serde(skip)]
-    pub(crate) native_decoder: Option<NativeDecoder>,
-    #[serde(skip)]
-    pub(crate) native_default: Option<NativeValue>,
-    #[serde(skip)]
-    pub(crate) native_validators: Vec<NativeValidator>,
-    #[serde(skip)]
-    pub(crate) encoder: Option<Encoder>,
-    #[serde(skip)]
-    pub(crate) validators: Vec<Validator>,
+    pub default_description: Option<DefaultDescription>,
+    pub json_schema: Option<Value>,
+}
+
+/// A help annotation independent of the native default value.
+#[derive(Debug, Clone)]
+pub enum DefaultDescription {
+    Text(String),
+    Hidden,
+}
+impl From<&str> for DefaultDescription {
+    fn from(value: &str) -> Self {
+        Self::Text(value.into())
+    }
+}
+impl From<String> for DefaultDescription {
+    fn from(value: String) -> Self {
+        Self::Text(value)
+    }
+}
+impl Serialize for DefaultDescription {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        match self {
+            Self::Text(text) => serializer.serialize_str(text),
+            Self::Hidden => serializer.serialize_bool(false),
+        }
+    }
+}
+impl std::ops::Deref for InputSchema {
+    type Target = InputDeclaration;
+    fn deref(&self) -> &Self::Target {
+        &self.declaration
+    }
 }
 
 impl std::fmt::Debug for InputSchema {
@@ -234,48 +286,60 @@ impl std::fmt::Debug for InputSchema {
 }
 
 impl InputSchema {
+    pub fn propagated(mut self) -> Self {
+        self.declaration.propagate = true;
+        self
+    }
+    pub fn has_default(&self) -> bool {
+        self.native_default.is_some()
+    }
     fn new(name: &str, kind: Kind, surface: Surface) -> Self {
         Self {
-            name: name.into(),
-            surface,
-            kind,
-            description: String::new(),
-            aliases: vec![],
-            required: surface == Surface::Arg,
-            hidden: false,
-            sensitive: false,
-            deprecated: None,
-            negated_name: None,
-            duplicate: DuplicatePolicy::Last,
-            duplicate_keys: DuplicatePolicy::Last,
-            env_vars: vec![],
-            config_path: None,
-            stdin: None,
-            prompt: None,
-            default_value: None,
-            enum_values: vec![],
-            cli_split: Split::Whole,
-            env_split: Split::Delimiter(",".into()),
-            stdin_split: Split::Lines,
-            unique: false,
-            variadic: false,
-            propagate: false,
-            min: None,
-            max: None,
-            integer: false,
-            non_empty: false,
-            strict_string: false,
-            min_length: None,
-            max_length: None,
-            pattern: None,
-            protocols: vec![],
-            path_checks: None,
-            value_hint: None,
-            element: None,
+            declaration: InputDeclaration {
+                name: name.into(),
+                surface,
+                kind,
+                description: String::new(),
+                aliases: vec![],
+                required: surface == Surface::Arg,
+                hidden: false,
+                sensitive: false,
+                deprecated: None,
+                negated_name: None,
+                duplicate: DuplicatePolicy::Last,
+                duplicate_keys: DuplicatePolicy::Last,
+                env_vars: vec![],
+                config_path: None,
+                stdin: None,
+                prompt: None,
+                default_value: None,
+                enum_values: vec![],
+                cli_split: Split::Whole,
+                env_split: Split::Delimiter(",".into()),
+                stdin_split: Split::Lines,
+                unique: false,
+                variadic: false,
+                propagate: false,
+                min: None,
+                max: None,
+                integer: false,
+                non_empty: false,
+                strict_string: false,
+                min_length: None,
+                max_length: None,
+                pattern: None,
+                protocols: vec![],
+                path_checks: None,
+                value_hint: None,
+                element: None,
+                default_description: None,
+                json_schema: None,
+            },
             native_decoder: None,
             native_default: None,
             native_validators: vec![],
             encoder: None,
+            validation_encoder: None,
             validators: vec![],
         }
     }
@@ -432,6 +496,16 @@ impl InputSchema {
     }
     pub(crate) fn validate_scalar(&self, value: &Value) -> Result<()> {
         let fail = |reason| CliError::validation("CONSTRAINT_VIOLATED", reason);
+        if !self.enum_values.is_empty()
+            && !value
+                .as_str()
+                .is_some_and(|s| self.enum_values.iter().any(|v| v == s))
+        {
+            return Err(CliError::validation(
+                "INVALID_ENUM",
+                "Value is not an available choice",
+            ));
+        }
         if let Some(n) = value.as_f64() {
             if self.min.is_some_and(|min| n < min) {
                 return Err(fail("Value is below the minimum"));
@@ -468,6 +542,27 @@ impl InputSchema {
         Ok(())
     }
     pub(crate) fn validate_definition(&self) -> Result<()> {
+        if let Some(prompt) = &self.prompt {
+            prompt.validate_definition()?;
+        }
+        if self
+            .json_schema
+            .as_ref()
+            .is_some_and(|schema| !schema.is_object() && !schema.is_boolean())
+        {
+            return Err(CliError::new(
+                "INVALID_SCHEMA",
+                "JSON Schema must be an object or boolean",
+            ));
+        }
+        if !self.enum_values.is_empty()
+            && !matches!(self.kind, Kind::String | Kind::Enum | Kind::Custom)
+        {
+            return Err(CliError::new(
+                "INVALID_SCHEMA",
+                "Text choices require a string, enum, or custom parser",
+            ));
+        }
         if self.name.is_empty()
             || self.name.starts_with('-')
             || self.name.chars().any(|c| c.is_whitespace() || c == '=')
@@ -529,8 +624,8 @@ impl InputSchema {
             element.validate_definition()?;
         }
         if let Some(default) = &self.native_default {
-            if let Some(json) = default.json() {
-                crate::resolve::validate_default(self, json)
+            if let Some(json) = self.default_validation_json(default) {
+                crate::resolve::validate_default(self, &json)
                     .map_err(|e| CliError::new("INVALID_SCHEMA", e.message))?;
             }
             for validate in &self.native_validators {
@@ -539,10 +634,17 @@ impl InputSchema {
         }
         Ok(())
     }
+    pub(crate) fn default_validation_json(&self, default: &NativeValue) -> Option<Value> {
+        match &self.validation_encoder {
+            Some(encode) => encode(default),
+            None => default.json.clone(),
+        }
+    }
 }
 
 mod builder;
 mod codecs;
+pub mod value;
 pub use builder::Arg;
 pub use builder::ArgMarker;
 pub use builder::Flag;

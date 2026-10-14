@@ -73,5 +73,7 @@ pub use schema::Optional;
 pub use schema::Required;
 pub use schema::arg;
 pub use schema::flag;
+pub use schema::value;
+pub use schema::value::ValueParser;
 pub use serde_json::Value;
 pub use serde_json::json;

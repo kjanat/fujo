@@ -148,6 +148,23 @@ pub fn flag_lookup(
     lookup
 }
 
+/// Choose a conventional spelling only when it resolves to this exact input.
+pub fn canonical_flag_name(
+    input: &InputSchema,
+    flags: &[InputSchema],
+    options: ParseOptions,
+) -> String {
+    let canonical = kebab(&input.name);
+    if flag_lookup(flags, options)
+        .get(&canonical)
+        .is_some_and(|(target, negated)| !negated && target.name == input.name)
+    {
+        canonical
+    } else {
+        input.name.clone()
+    }
+}
+
 pub fn parse(schema: &CommandSchema, argv: &[String], options: ParseOptions) -> Result<Parsed> {
     let tokens = tokenize(argv);
     let lookup = flag_lookup(&schema.flags, options);

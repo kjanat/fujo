@@ -10,12 +10,61 @@ use std::sync::Arc;
 pub trait ConfigReader: Send + Sync {
     fn read(&self, path: &Path) -> Result<Option<String>>;
 }
-type Loader = Arc<dyn Fn(&str) -> Result<Value> + Send + Sync>;
+type Loader = Arc<dyn Fn(&Path, &str) -> Result<Value> + Send + Sync>;
+#[derive(Debug, Clone, Copy)]
+pub enum Platform {
+    Linux,
+    MacOs,
+    Windows,
+    Other,
+}
+#[derive(Debug, Clone, Default)]
+pub struct ConfigDirectories {
+    pub user: Vec<PathBuf>,
+    pub system: Vec<PathBuf>,
+}
+/// Resolve platform directories from named environment reads supplied by the host.
+pub fn config_directories(
+    platform: Platform,
+    mut env: impl FnMut(&str) -> Option<String>,
+) -> ConfigDirectories {
+    let mut dirs = ConfigDirectories::default();
+    match platform {
+        Platform::Windows => {
+            if let Some(dir) = env("APPDATA")
+                .map(PathBuf::from)
+                .or_else(|| env("USERPROFILE").map(|h| PathBuf::from(h).join("AppData/Roaming")))
+            {
+                dirs.user.push(dir);
+            }
+        }
+        _ => {
+            let home = env("HOME").map(PathBuf::from);
+            if let Some(dir) = env("XDG_CONFIG_HOME")
+                .filter(|s| !s.is_empty())
+                .map(PathBuf::from)
+                .or_else(|| home.as_ref().map(|h| h.join(".config")))
+            {
+                dirs.user.push(dir);
+            }
+            if matches!(platform, Platform::MacOs)
+                && let Some(home) = home
+            {
+                dirs.user.push(home.join("Library/Application Support"));
+            }
+            if matches!(platform, Platform::Linux | Platform::MacOs) {
+                dirs.system.push(PathBuf::from("/etc"));
+            }
+        }
+    }
+    dirs
+}
 #[derive(Clone)]
 pub struct ConfigSettings {
     pub name: String,
     pub paths: Option<Vec<PathBuf>>,
     pub loaders: BTreeMap<String, Loader>,
+    pub base_dir: Option<PathBuf>,
 }
 impl ConfigSettings {
     pub fn new(name: impl Into<String>) -> Self {
@@ -23,6 +72,7 @@ impl ConfigSettings {
             name: name.into(),
             paths: None,
             loaders: BTreeMap::new(),
+            base_dir: None,
         }
     }
     pub fn paths(mut self, paths: impl IntoIterator<Item = PathBuf>) -> Self {
@@ -30,9 +80,16 @@ impl ConfigSettings {
         self
     }
     pub fn loader(
-        mut self,
+        self,
         extensions: impl IntoIterator<Item = impl Into<String>>,
         parse: impl Fn(&str) -> Result<Value> + Send + Sync + 'static,
+    ) -> Self {
+        self.path_loader(extensions, move |_, text| parse(text))
+    }
+    pub fn path_loader(
+        mut self,
+        extensions: impl IntoIterator<Item = impl Into<String>>,
+        parse: impl Fn(&Path, &str) -> Result<Value> + Send + Sync + 'static,
     ) -> Self {
         let parse: Loader = Arc::new(parse);
         for ext in extensions {
@@ -41,10 +98,29 @@ impl ConfigSettings {
         }
         self
     }
+    pub fn base_dir(mut self, dir: impl Into<PathBuf>) -> Self {
+        self.base_dir = Some(dir.into());
+        self
+    }
     pub fn candidates(
         &self,
         cwd: &Path,
         user_dir: Option<&Path>,
+        system_dirs: &[PathBuf],
+    ) -> Vec<PathBuf> {
+        self.candidates_in(
+            cwd,
+            &user_dir
+                .into_iter()
+                .map(Path::to_path_buf)
+                .collect::<Vec<_>>(),
+            system_dirs,
+        )
+    }
+    pub fn candidates_in(
+        &self,
+        cwd: &Path,
+        user_dirs: &[PathBuf],
         system_dirs: &[PathBuf],
     ) -> Vec<PathBuf> {
         if let Some(paths) = &self.paths {
@@ -59,19 +135,24 @@ impl ConfigSettings {
             )
             .collect::<Vec<_>>();
         let mut paths = vec![];
-        for ancestor in cwd.ancestors() {
+        for ancestor in self.base_dir.as_deref().unwrap_or(cwd).ancestors() {
             for ext in &extensions {
-                paths.push(ancestor.join(format!(".{}rc.{ext}", self.name)));
-                paths.push(ancestor.join(format!("{}.{ext}", self.name)));
+                paths.push(ancestor.join(format!(".{}.{ext}", self.name)));
+                paths.push(ancestor.join(format!("{}.config.{ext}", self.name)));
+                paths.push(
+                    ancestor
+                        .join(".config")
+                        .join(format!("{}.{ext}", self.name)),
+                );
             }
         }
-        for dir in user_dir
-            .into_iter()
+        for dir in user_dirs
+            .iter()
+            .map(PathBuf::as_path)
             .chain(system_dirs.iter().map(PathBuf::as_path))
         {
             for ext in &extensions {
                 paths.push(dir.join(&self.name).join(format!("config.{ext}")));
-                paths.push(dir.join(format!("{}.{ext}", self.name)));
             }
         }
         paths
@@ -107,7 +188,7 @@ pub fn discover(
             .unwrap_or("json")
             .to_lowercase();
         let value = if let Some(loader) = settings.loaders.get(&ext) {
-            loader(&text)
+            loader(&path, &text)
         } else if ext == "json" {
             serde_json::from_str(&text).map_err(Into::into)
         } else {

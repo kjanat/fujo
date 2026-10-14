@@ -27,8 +27,7 @@ pub(super) fn collection_schema<T: Clone + Send + Sync + 'static>(
     element: InputSchema,
 ) -> InputSchema {
     let mut schema = InputSchema::new(name, kind, Surface::Flag);
-    schema.sensitive = element.sensitive;
-    let has_json_representation = element.encoder.is_some();
+    schema.declaration.sensitive = element.sensitive;
     let decoder = element.native_decoder.clone();
     schema.native_decoder = Some(Arc::new(move |json| {
         let decode = |value: &Value| -> Result<T> {
@@ -40,7 +39,7 @@ pub(super) fn collection_schema<T: Clone + Send + Sync + 'static>(
 
             Ok(native.downcast_ref::<T>()?.clone())
         };
-        let mut native = if kind == Kind::KeyValue {
+        let native = if kind == Kind::KeyValue {
             let entries = json
                 .as_object()
                 .ok_or_else(|| CliError::validation("TYPE_MISMATCH", "Expected entries"))?;
@@ -56,31 +55,17 @@ pub(super) fn collection_schema<T: Clone + Send + Sync + 'static>(
                 .ok_or_else(|| CliError::validation("TYPE_MISMATCH", "Expected an array"))?;
             NativeValue::new(values.iter().map(decode).collect::<Result<Vec<T>>>()?)
         };
-        if has_json_representation {
-            native.json = Some(json.clone());
-        }
         Ok(native)
     }));
-    if let Some(encode) = element.encoder.clone() {
-        schema.encoder = Some(Arc::new(move |native| {
-            if kind == Kind::KeyValue {
-                let entries = native.inner.downcast_ref::<BTreeMap<String, T>>()?;
-                let values = entries
-                    .iter()
-                    .map(|(k, v)| encode(&NativeValue::new(v.clone())).map(|v| (k.clone(), v)))
-                    .collect::<Option<serde_json::Map<String, Value>>>()?;
-                Some(Value::Object(values))
-            } else {
-                let values = native
-                    .inner
-                    .downcast_ref::<Vec<T>>()?
-                    .iter()
-                    .map(|v| encode(&NativeValue::new(v.clone())))
-                    .collect::<Option<Vec<_>>>()?;
-                Some(Value::Array(values))
-            }
-        }));
-    }
+    schema.encoder = element
+        .encoder
+        .clone()
+        .map(|encode| collection_encoder::<T>(kind, encode));
+    schema.validation_encoder = element
+        .validation_encoder
+        .clone()
+        .or_else(|| element.encoder.clone())
+        .map(|encode| collection_encoder::<T>(kind, encode));
     let element_validators = element.native_validators.clone();
     schema.native_validators.push(Arc::new(move |native| {
         let values: Vec<&T> = if kind == Kind::KeyValue {
@@ -99,8 +84,30 @@ pub(super) fn collection_schema<T: Clone + Send + Sync + 'static>(
         }
         Ok(())
     }));
-    schema.element = Some(Box::new(element));
+    schema.declaration.element = Some(Box::new(element));
     schema
+}
+
+fn collection_encoder<T: Clone + Send + Sync + 'static>(kind: Kind, encode: Encoder) -> Encoder {
+    Arc::new(move |native| {
+        if kind == Kind::KeyValue {
+            native
+                .inner
+                .downcast_ref::<BTreeMap<String, T>>()?
+                .iter()
+                .map(|(k, v)| encode(&NativeValue::new(v.clone())).map(|v| (k.clone(), v)))
+                .collect::<Option<serde_json::Map<String, Value>>>()
+                .map(Value::Object)
+        } else {
+            native
+                .inner
+                .downcast_ref::<Vec<T>>()?
+                .iter()
+                .map(|v| encode(&NativeValue::new(v.clone())))
+                .collect::<Option<Vec<_>>>()
+                .map(Value::Array)
+        }
+    })
 }
 
 pub(super) fn parse_date(s: &str) -> Result<DateTime<Utc>> {

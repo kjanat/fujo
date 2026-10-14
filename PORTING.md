@@ -53,10 +53,25 @@ default and represents absence as `None`. This follows Rust's presence types;
 the TypeScript resolver supplies empty collections even for its optional collection
 declarations.
 
+Collections use `ValueParser<T>` elements, declared through `value::string()`,
+`value::parse::<T>()`, and related factories. These parsers carry value constraints
+and optional encoding, while source bindings and defaults belong to the input.
+`InputSchema` exposes a read-only declaration and keeps codecs private. Collection
+splitting and uniqueness methods are restricted to the appropriate native types.
+
 Framework-generated sensitive diagnostics and debug views are redacted. Accessing
 an input inside a handler returns its full native value. `Resolved::json()` redacts
 sensitive values and omits opaque custom values, so its diagnostic representation
 does not require application types to implement Serde.
+
+Common `FromStr` primitive types have automatic JSON encoding and schema metadata.
+Custom application types can opt in with `encode_json` and `json_schema`; opaque
+types remain supported. Default descriptions control help independently of the
+runtime default. JSON help uses the Rust definition format below.
+
+Filesystem checks require an injected capability during process-free execution.
+The default policy records skipped checks; `Required` fails and `Disabled`
+explicitly opts out. Native execution supplies the filesystem automatically.
 
 ## Schema documents and formats
 

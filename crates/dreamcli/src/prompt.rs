@@ -12,6 +12,26 @@ impl PromptEngine for TerminalPrompter {
     fn prompt(&self, prompt: &Prompt) -> Result<Option<Value>> {
         let mut stderr = io::stderr().lock();
         writeln!(stderr, "{}", prompt.message)?;
+        if prompt.kind == PromptKind::Confirm {
+            writeln!(
+                stderr,
+                "{}",
+                if prompt
+                    .default
+                    .as_ref()
+                    .and_then(Value::as_bool)
+                    .unwrap_or(true)
+                {
+                    "(Y/n)"
+                } else {
+                    "(y/N)"
+                }
+            )?;
+        } else if let Some(default) = &prompt.default
+            && !prompt.secret
+        {
+            writeln!(stderr, "(default: {})", default.as_str().unwrap_or(""))?;
+        }
         for (i, choice) in prompt.choices.iter().enumerate() {
             writeln!(stderr, "  {}. {}", i + 1, choice.label)?;
         }
@@ -47,7 +67,8 @@ impl PromptEngine for TerminalPrompter {
             PromptKind::Input => Ok(Some(json!(answer))),
             PromptKind::Confirm => match answer.to_lowercase().as_str() {
                 "y" | "yes" | "true" | "1" => Ok(Some(json!(true))),
-                "n" | "no" | "false" | "0" | "" => Ok(Some(json!(false))),
+                "n" | "no" | "false" | "0" => Ok(Some(json!(false))),
+                "" => Ok(Some(json!(""))),
                 _ => Err(CliError::validation(
                     "CONSTRAINT_VIOLATED",
                     "Answer yes or no",
@@ -61,5 +82,9 @@ impl PromptEngine for TerminalPrompter {
                 .collect::<Result<Vec<_>>>()
                 .map(|v| Some(json!(v))),
         }
+    }
+    fn retry(&self, error: &CliError) -> bool {
+        eprintln!("{}", error.message);
+        true
     }
 }

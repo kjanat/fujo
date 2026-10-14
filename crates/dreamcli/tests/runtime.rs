@@ -149,7 +149,7 @@ fn explicit_config_and_discovery_feed_the_same_resolution_pipeline() {
     let host = Host {
         reader: Reader(BTreeMap::from([
             (
-                PathBuf::from("/project/.apprc.json"),
+                PathBuf::from("/project/.app.json"),
                 json!({"server":{"port":8080}}).to_string(),
             ),
             (
@@ -225,7 +225,7 @@ fn config_search_is_project_then_user_then_system() {
         Some(Path::new("/user/config")),
         &[PathBuf::from("/system/config")],
     );
-    assert_eq!(paths[0], PathBuf::from("/project/sub/.apprc.json"));
+    assert_eq!(paths[0], PathBuf::from("/project/sub/.app.json"));
     assert!(
         paths
             .iter()

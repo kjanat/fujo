@@ -80,7 +80,7 @@ and presence from that handle:
 | `flag::parse::<u16>("port").default(8080)` | `u16`                                   |
 | `flag::boolean("force")`                   | `bool`, default `false`                 |
 | `flag::count("verbose").alias("v")`        | `u64`, default `0`; `-vvv` supplies `3` |
-| `flag::array("tags", flag::string("tag"))` | `Vec<String>`, default empty            |
+| `flag::array("tags", value::string())`     | `Vec<String>`, default empty            |
 | `arg::string("name")`                      | `String`                                |
 | `arg::string("name").optional()`           | `Option<String>`                        |
 | `arg::string("files").variadic()`          | `Vec<String>`                           |
@@ -121,6 +121,28 @@ an explicit decoder for applications that need structured config or prompt
 values. `.sensitive()` hides values from framework diagnostics, debug output,
 help defaults, and exported schema defaults; handlers can still access them.
 
+Collections take a reusable value parser, which has no environment, config,
+prompt, alias, or default bindings. Attach those settings to the collection:
+
+```rust
+use dreamcli::{flag, value};
+
+let tag = value::string().non_empty();
+let tags = flag::array("tags", tag.clone()).env("TAGS").unique();
+let label = tag.flag("label");
+let name = value::string().arg("name");
+```
+
+Scalar inputs do not expose collection splitting or uniqueness methods. Schema
+metadata is readable through `schema()` and immutable outside core.
+
+`parse::<T>()` exports JSON values and defaults for common primitive types.
+Application types can supply `.encode_json(|value| ...)` and
+`.json_schema(json!({ ... }))` without implementing Serde. Encoding works for
+collection elements too. `.default_description("auto")` or `.hide_default()`
+changes the help annotation while retaining the machine-readable default;
+calling `.default()` again resets the annotation.
+
 ## Resolve values
 
 Each input independently follows:
@@ -145,6 +167,14 @@ stage for each input; `was_explicit()` distinguishes supplied values from defaul
 Conditional `.interactive()` callbacks receive all values resolved through config
 before prompts and defaults. Use `inputs.peek(&handle)` to inspect an input that
 may still be absent.
+
+Input and confirmation prompts support `.default(...)`. Blank input without a
+prompt default falls through to the input's default or missing-value handling.
+Blank confirmation defaults to `true`, or the configured boolean default.
+`Prompt::input(...).validate(...)` checks typed answers; terminal prompts retry
+invalid answers, and scripted prompts retry while answers remain, then fall
+through. Prompt defaults bypass that answer validator. Cancellation stops the
+invocation with exit code 130.
 
 `.stdin()` selects piped input for a missing value or an explicit `-`. An explicit
 dash keeps CLI precedence and records that its bytes came from stdin. Stdin is
@@ -205,6 +235,12 @@ writer failures propagate to the run result.
 `-q`, and help can be released to application flags with `Builtins`. Everything
 after `--` remains literal input.
 
+`--help --json` writes the program definition to stdout; command help with JSON
+mode writes the selected command definition. Both paths avoid running actions
+or reading bound input sources. Help and completion choose kebab-case names only
+when the active parser accepts them. `RunOptions.help` supports alphabetical or
+declaration order and a custom comparator through `HelpOptions::sort_flags`.
+
 Enable `.completions()` for both command and flag access:
 
 ```console
@@ -223,6 +259,12 @@ The generators also support PowerShell. Calling the flag without a shell detects
 ancestors, then user and system config directories. `--config PATH` selects one
 file explicitly. Custom format loaders accept a parser closure and file extensions.
 `cargo_manifest!()` provides compile-time Cargo package metadata.
+
+Each project ancestor is checked for `.mycli.json`, `mycli.config.json`, and
+`.config/mycli.json`, nearest first. User paths include XDG locations, macOS
+Application Support, or Windows AppData; Unix system config is
+`/etc/mycli/config.json`. `ConfigSettings::base_dir` anchors the ancestor search.
+`path_loader` receives the discovered path and content for richer providers.
 
 `execute()` runs in-process using only injected inputs and captures output:
 
@@ -249,10 +291,20 @@ assert_eq!(result.stdout, "Ada\n");
 ```
 
 Inject `TestPrompter`, `FileSystem`, or a complete `Runtime` for other test cases.
-`testkit::run_command()` uses the same executor. `Cli::definition()` exports Rust
+`testkit::run_cli(&app, ...)` preserves the complete application configuration.
+`run_command_with_builtins` lets command-only tests release builtin names.
+`Cli::definition()` exports Rust
 schema metadata; `json_schema::input_schema()` describes JSON-representable resolved
 values. Opaque custom Rust values are omitted from JSON exports unless they use a
 codec with a JSON representation.
+
+Missing filesystem capabilities are reported through `RunResult.skipped_checks`
+and `Resolved.skipped_checks`. Set `ResolveOptions.filesystem_policy` to
+`CheckPolicy::Required` to fail when declared checks cannot run, or to
+`CheckPolicy::Disabled` to opt out explicitly. The default `Available` policy
+runs injected checks and records skips. Native runs inject a filesystem.
+Use `PathChecks::file()` for existing input files and
+`PathChecks::file().allow_missing()` for output files that may be new.
 
 Runnable examples are in `crates/dreamcli/examples/`. Build and validation commands
 are in [CONTRIBUTING.md](CONTRIBUTING.md). Port compatibility and deliberate Rust

@@ -2,7 +2,47 @@ use crate::CliError;
 use crate::Result;
 use serde_json::Value;
 use std::any::Any;
+use std::any::TypeId;
 use std::sync::Arc;
+
+pub(crate) fn primitive_json(value: &dyn Any) -> Option<Value> {
+    if value
+        .downcast_ref::<f32>()
+        .is_some_and(|value| !value.is_finite())
+        || value
+            .downcast_ref::<f64>()
+            .is_some_and(|value| !value.is_finite())
+    {
+        return None;
+    }
+    macro_rules! primitives {
+        ($($ty:ty),*) => { $(if let Some(value) = value.downcast_ref::<$ty>() {
+            return serde_json::to_value(value).ok();
+        })* };
+    }
+    primitives!(
+        String, bool, u8, u16, u32, u64, u128, usize, i8, i16, i32, i64, i128, isize, f32, f64
+    );
+    None
+}
+pub(crate) fn primitive_schema<T: 'static>() -> Option<Value> {
+    macro_rules! integers {
+        ($($ty:ty),*) => { $(if TypeId::of::<T>() == TypeId::of::<$ty>() {
+            return Some(serde_json::json!({"type":"integer", "minimum": <$ty>::MIN, "maximum": <$ty>::MAX}));
+        })* };
+    }
+    integers!(u8, u16, u32, u64, usize, i8, i16, i32, i64, isize);
+    let kind = if TypeId::of::<T>() == TypeId::of::<String>() {
+        "string"
+    } else if TypeId::of::<T>() == TypeId::of::<bool>() {
+        "boolean"
+    } else if TypeId::of::<T>() == TypeId::of::<f32>() || TypeId::of::<T>() == TypeId::of::<f64>() {
+        "number"
+    } else {
+        return None;
+    };
+    Some(serde_json::json!({"type": kind}))
+}
 
 /// Native Rust value; JSON is optional metadata, never the handler's storage model.
 #[derive(Clone)]

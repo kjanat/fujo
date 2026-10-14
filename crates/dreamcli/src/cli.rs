@@ -28,7 +28,6 @@ pub use dreamcli_core::command::Builtins;
 pub use dreamcli_core::command::ProgramSchema;
 use std::collections::BTreeSet;
 use std::path::Path;
-use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Arc;
 
@@ -274,6 +273,7 @@ impl Cli {
         initial_error: Option<CliError>,
     ) -> RunResult {
         let mut failure = initial_error;
+        options.help.case_parity = options.parse.case_parity;
         for plugin in &self.plugins {
             if failure.is_some() {
                 break;
@@ -337,7 +337,11 @@ impl Cli {
                             .and_then(help::shell_from_path)
                             .unwrap_or(Shell::Bash))
                     })?;
-                    output.raw_stdout(&completion::generate(&self.schema, shell));
+                    output.raw_stdout(&completion::generate_with_options(
+                        &self.schema,
+                        shell,
+                        options.parse,
+                    ));
                     return Ok(());
                 }
                 if argv.first().is_some_and(|s| s == "completions") {
@@ -357,7 +361,11 @@ impl Cli {
                             "Unexpected completion argument",
                         ));
                     }
-                    output.raw_stdout(&completion::generate(&self.schema, shell));
+                    output.raw_stdout(&completion::generate_with_options(
+                        &self.schema,
+                        shell,
+                        options.parse,
+                    ));
                     return Ok(());
                 }
             }
@@ -384,7 +392,11 @@ impl Cli {
                 result => result?,
             };
             let Some(invocation) = invocation else {
-                output.raw_stdout(&help::root_help(&self.schema, &options.help));
+                if options.output.json {
+                    output.json(&self.definition())?;
+                } else {
+                    output.raw_stdout(&help::root_help(&self.schema, &options.help));
+                }
                 return Ok(());
             };
             if help
@@ -392,6 +404,14 @@ impl Cli {
                     && !invocation.command.children.is_empty()
                     && invocation.argv.is_empty())
             {
+                if options.output.json {
+                    if invocation.path.is_empty() {
+                        output.json(&self.definition())?;
+                    } else {
+                        output.json(&crate::json_schema::command_definition(&invocation.schema))?;
+                    }
+                    return Ok(());
+                }
                 output.raw_stdout(&help::command_help(
                     &invocation.schema,
                     &format!(
@@ -439,19 +459,8 @@ impl Cli {
                 if let Some(settings) = &self.config
                     && (options.resolve.config.is_null() || explicit_config.is_some())
                 {
-                    let user = runtime
-                        .env("XDG_CONFIG_HOME")
-                        .map(PathBuf::from)
-                        .or_else(|| {
-                            runtime
-                                .env("HOME")
-                                .map(|h| PathBuf::from(h).join(".config"))
-                        });
-                    let system = runtime
-                        .env("XDG_CONFIG_DIRS")
-                        .map(|p| std::env::split_paths(&p).collect())
-                        .unwrap_or_else(|| vec![PathBuf::from("/etc/xdg")]);
-                    let paths = settings.candidates(&runtime.cwd()?, user.as_deref(), &system);
+                    let dirs = runtime.config_directories();
+                    let paths = settings.candidates_in(&runtime.cwd()?, &dirs.user, &dirs.system);
                     if let Some(found) = config::discover(
                         settings,
                         runtime.reader(),
@@ -514,8 +523,12 @@ impl Cli {
             stdout: capture.stdout,
             stderr: capture.stderr,
             error,
-            resolved,
             activities: output.events(),
+            skipped_checks: resolved
+                .as_ref()
+                .map(|r| r.skipped_checks.clone())
+                .unwrap_or_default(),
+            resolved,
         }
     }
     fn invocation<'a>(

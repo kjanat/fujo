@@ -92,7 +92,7 @@ fn nodes(program: &ProgramSchema) -> Vec<Node> {
         .iter()
         .cloned()
         .map(|mut f| {
-            f.propagate = true;
+            f = f.propagated();
             f
         })
         .collect();
@@ -120,35 +120,28 @@ fn children(commands: &[CommandSchema]) -> Vec<(String, String)> {
         })
         .collect()
 }
-fn forms(input: &InputSchema) -> Vec<String> {
-    std::iter::once(format!("--{}", kebab(&input.name)))
-        .chain(input.aliases.iter().filter(|a| !a.hidden).map(|a| {
-            format!(
-                "{}{}",
-                if a.name.chars().count() == 1 {
-                    "-"
-                } else {
-                    "--"
-                },
-                a.name
-            )
-        }))
-        .chain(input.negated_name.as_ref().map(|n| format!("--{n}")))
-        .collect()
-}
-fn kebab(name: &str) -> String {
-    let mut out = String::new();
-    let mut prev = None;
-    for c in name.chars() {
-        if c.is_ascii_uppercase()
-            && prev.is_some_and(|p: char| p.is_ascii_lowercase() || p.is_ascii_digit())
-        {
-            out.push('-');
-        }
-        out.extend(c.to_lowercase());
-        prev = Some(c);
-    }
-    out
+fn forms(
+    input: &InputSchema,
+    flags: &[InputSchema],
+    options: dreamcli_core::parse::ParseOptions,
+) -> Vec<String> {
+    std::iter::once(format!(
+        "--{}",
+        dreamcli_core::parse::canonical_flag_name(input, flags, options)
+    ))
+    .chain(input.aliases.iter().filter(|a| !a.hidden).map(|a| {
+        format!(
+            "{}{}",
+            if a.name.chars().count() == 1 {
+                "-"
+            } else {
+                "--"
+            },
+            a.name
+        )
+    }))
+    .chain(input.negated_name.as_ref().map(|n| format!("--{n}")))
+    .collect()
 }
 fn quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
@@ -166,6 +159,13 @@ fn identifier(s: &str) -> String {
 }
 
 pub fn generate(program: &ProgramSchema, shell: Shell) -> String {
+    generate_with_options(program, shell, Default::default())
+}
+pub fn generate_with_options(
+    program: &ProgramSchema,
+    shell: Shell,
+    options: dreamcli_core::parse::ParseOptions,
+) -> String {
     let nodes = nodes(program);
     let function = identifier(&program.name);
     let globals: Vec<&str> = [
@@ -177,7 +177,7 @@ pub fn generate(program: &ProgramSchema, shell: Shell) -> String {
     .into_iter()
     .flatten()
     .collect();
-    match shell {
+    let script = match shell {
         Shell::Bash | Shell::Zsh => {
             let bash = shell == Shell::Bash;
             let mut script = if bash {
@@ -193,7 +193,7 @@ pub fn generate(program: &ProgramSchema, shell: Shell) -> String {
             script.push_str("    token=\"${words[i]}\"\n    (( skip )) && { skip=0; continue; }\n    [[ $token == -- ]] && break\n    case \"$path:$token\" in\n");
             for node in &nodes {
                 for flag in node.flags.iter().filter(|f| !f.hidden && f.expects_value()) {
-                    for form in forms(flag) {
+                    for form in forms(flag, &node.flags, options) {
                         let _ = writeln!(
                             script,
                             "      {}) skip=1; continue ;;",
@@ -219,7 +219,7 @@ pub fn generate(program: &ProgramSchema, shell: Shell) -> String {
             for node in &nodes {
                 for flag in node.flags.iter().filter(|f| !f.hidden && f.expects_value()) {
                     let element = flag.element.as_deref().unwrap_or(flag);
-                    for form in forms(flag) {
+                    for form in forms(flag, &node.flags, options) {
                         let _ =
                             writeln!(script, "    {})", quote(&format!("{}:{form}", node.path)));
                         if !element.enum_values.is_empty() {
@@ -252,7 +252,12 @@ pub fn generate(program: &ProgramSchema, shell: Shell) -> String {
                     .children
                     .iter()
                     .map(|(n, _)| n.clone())
-                    .chain(node.flags.iter().filter(|f| !f.hidden).flat_map(forms))
+                    .chain(
+                        node.flags
+                            .iter()
+                            .filter(|f| !f.hidden)
+                            .flat_map(|flag| forms(flag, &node.flags, options)),
+                    )
                     .chain(globals.iter().map(|s| s.to_string()))
                     .map(|s| quote(&s))
                     .collect::<Vec<_>>()
@@ -279,7 +284,7 @@ pub fn generate(program: &ProgramSchema, shell: Shell) -> String {
             );
             for node in &nodes {
                 for flag in node.flags.iter().filter(|f| !f.hidden && f.expects_value()) {
-                    for form in forms(flag) {
+                    for form in forms(flag, &node.flags, options) {
                         let _ = writeln!(
                             script,
                             "      case {}\n        set skip 1\n        continue",
@@ -325,7 +330,7 @@ pub fn generate(program: &ProgramSchema, shell: Shell) -> String {
                     );
                 }
                 for flag in node.flags.iter().filter(|f| !f.hidden) {
-                    for form in forms(flag) {
+                    for form in forms(flag, &node.flags, options) {
                         let long = form.starts_with("--");
                         let _ = write!(
                             script,
@@ -365,7 +370,7 @@ pub fn generate(program: &ProgramSchema, shell: Shell) -> String {
             );
             for node in &nodes {
                 for flag in node.flags.iter().filter(|f| !f.hidden && f.expects_value()) {
-                    for form in forms(flag) {
+                    for form in forms(flag, &node.flags, options) {
                         let _ = writeln!(
                             script,
                             "      {} {{ $skip = $true }}",
@@ -395,7 +400,12 @@ pub fn generate(program: &ProgramSchema, shell: Shell) -> String {
                     .children
                     .iter()
                     .map(|(n, _)| n.clone())
-                    .chain(node.flags.iter().filter(|f| !f.hidden).flat_map(forms))
+                    .chain(
+                        node.flags
+                            .iter()
+                            .filter(|f| !f.hidden)
+                            .flat_map(|flag| forms(flag, &node.flags, options)),
+                    )
                     .chain(globals.iter().map(|s| s.to_string()))
                     .map(|s| ps_quote(&s))
                     .collect::<Vec<_>>()
@@ -413,7 +423,7 @@ pub fn generate(program: &ProgramSchema, shell: Shell) -> String {
                     if element.enum_values.is_empty() {
                         continue;
                     }
-                    for form in forms(flag) {
+                    for form in forms(flag, &node.flags, options) {
                         let _ = writeln!(
                             script,
                             "    {} {{ $candidates = @({}) }}",
@@ -431,5 +441,18 @@ pub fn generate(program: &ProgramSchema, shell: Shell) -> String {
             script.push_str("  }\n  $candidates | Where-Object { $_.StartsWith($valueCur, [StringComparison]::OrdinalIgnoreCase) } | ForEach-Object { [System.Management.Automation.CompletionResult]::new($prefix + $_, $_, 'ParameterValue', $_) }\n}\n");
             script
         }
+    };
+    let tag = program
+        .version
+        .as_ref()
+        .map(|v| format!("{} v{v}", program.name))
+        .unwrap_or_else(|| program.name.clone())
+        .replace(['\n', '\r'], " ");
+    let header = format!("# Completion for {tag}\n");
+    if shell == Shell::Zsh {
+        let (first, rest) = script.split_once('\n').unwrap_or((&script, ""));
+        format!("{first}\n{header}{rest}")
+    } else {
+        format!("{header}{script}")
     }
 }

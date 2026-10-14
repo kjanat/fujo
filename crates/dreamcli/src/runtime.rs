@@ -33,6 +33,7 @@ pub struct RunResult {
     pub error: Option<CliError>,
     pub resolved: Option<Resolved>,
     pub activities: Vec<ActivityEvent>,
+    pub skipped_checks: Vec<crate::resolve::SkippedCheck>,
 }
 impl RunResult {
     pub fn success(&self) -> bool {
@@ -59,6 +60,18 @@ pub trait Runtime: Send + Sync {
     fn reader(&self) -> &dyn ConfigReader;
     fn filesystem(&self) -> Arc<dyn FileSystem>;
     fn output(&self, options: OutputOptions) -> Output;
+    fn config_directories(&self) -> crate::config::ConfigDirectories {
+        let platform = if cfg!(target_os = "windows") {
+            crate::config::Platform::Windows
+        } else if cfg!(target_os = "macos") {
+            crate::config::Platform::MacOs
+        } else if cfg!(target_os = "linux") {
+            crate::config::Platform::Linux
+        } else {
+            crate::config::Platform::Other
+        };
+        crate::config::config_directories(platform, |name| self.env(name))
+    }
 }
 #[derive(Debug, Default)]
 pub struct NativeRuntime;

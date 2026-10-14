@@ -25,6 +25,7 @@ use dreamcli::schema::Split;
 use dreamcli::schema::StdinBinding;
 use dreamcli::schema::StdinConsume;
 use dreamcli::schema::StdinWhen;
+use dreamcli::value;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -507,7 +508,7 @@ fn duplicate_policies_and_constraints_apply() {
 fn arrays_have_native_empty_defaults_and_element_validation() {
     let ports = flag::array(
         "ports",
-        flag::parse::<u16>("port").validate(|v| {
+        value::parse::<u16>().validate(|v| {
             if *v > 0 {
                 Ok(())
             } else {
@@ -528,7 +529,7 @@ fn arrays_have_native_empty_defaults_and_element_validation() {
 }
 #[test]
 fn json_and_whitespace_split_policies_work() {
-    let tags = flag::array("tags", flag::string("tag"))
+    let tags = flag::array("tags", value::string())
         .split_env(Split::Json)
         .env("TAGS");
     let app = cli("app").default(command("app").flag(tags.clone()).action(|_| Ok(())));
@@ -710,7 +711,7 @@ fn output_modes_can_be_injected_without_flags() {
 }
 #[test]
 fn multiselect_prompts_return_native_collections() {
-    let tags = flag::array("tags", flag::string("tag")).prompt(Prompt::multiselect(
+    let tags = flag::array("tags", value::string()).prompt(Prompt::multiselect(
         "Tags",
         [Choice::new("a", "A"), Choice::new("b", "B")],
     ));
@@ -770,7 +771,7 @@ fn root_help_ignores_malformed_flags_and_unconfigured_json_is_an_error() {
 }
 #[test]
 fn array_defaults_obey_element_constraints_and_native_validation() {
-    let ports = flag::array("ports", flag::number("element").min(1.0)).default(vec![0.0]);
+    let ports = flag::array("ports", value::number().min(1.0)).default(vec![0.0]);
     assert!(command("app").flag(ports).validate().is_err());
 }
 
