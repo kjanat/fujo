@@ -1,0 +1,2347 @@
+{
+	"sourceCommit": "f87c1672e10b27c066524a0715bfea0f714dd5bc",
+	"fixtures": [
+		{
+			"schema": "basic",
+			"argv": [],
+			"options": {},
+			"expected": {
+				"flags": {
+					"name": "default",
+					"verbose": 0,
+					"force": false,
+					"tag": [],
+					"define": {}
+				},
+				"args": {},
+				"sources": {
+					"flags": {
+						"name": {
+							"stage": "default"
+						},
+						"verbose": {
+							"stage": "default"
+						},
+						"force": {
+							"stage": "default"
+						},
+						"tag": {
+							"stage": "default"
+						},
+						"define": {
+							"stage": "default"
+						}
+					},
+					"args": {}
+				}
+			}
+		},
+		{
+			"schema": "basic",
+			"argv": [
+				"--name",
+				"cli"
+			],
+			"options": {
+				"env": {
+					"NAME": "env"
+				},
+				"config": {
+					"app": {
+						"name": "config"
+					}
+				}
+			},
+			"expected": {
+				"flags": {
+					"name": "cli",
+					"verbose": 0,
+					"force": false,
+					"tag": [],
+					"define": {}
+				},
+				"args": {},
+				"sources": {
+					"flags": {
+						"name": {
+							"stage": "cli"
+						},
+						"verbose": {
+							"stage": "default"
+						},
+						"force": {
+							"stage": "default"
+						},
+						"tag": {
+							"stage": "default"
+						},
+						"define": {
+							"stage": "default"
+						}
+					},
+					"args": {}
+				}
+			}
+		},
+		{
+			"schema": "basic",
+			"argv": [],
+			"options": {
+				"env": {
+					"NAME": "env"
+				},
+				"config": {
+					"app": {
+						"name": "config"
+					}
+				}
+			},
+			"expected": {
+				"flags": {
+					"name": "env",
+					"verbose": 0,
+					"force": false,
+					"tag": [],
+					"define": {}
+				},
+				"args": {},
+				"sources": {
+					"flags": {
+						"name": {
+							"stage": "env",
+							"envVar": "NAME"
+						},
+						"verbose": {
+							"stage": "default"
+						},
+						"force": {
+							"stage": "default"
+						},
+						"tag": {
+							"stage": "default"
+						},
+						"define": {
+							"stage": "default"
+						}
+					},
+					"args": {}
+				}
+			}
+		},
+		{
+			"schema": "basic",
+			"argv": [],
+			"options": {
+				"config": {
+					"app": {
+						"name": "config",
+						"port": 3000,
+						"region": "eu"
+					}
+				}
+			},
+			"expected": {
+				"flags": {
+					"name": "config",
+					"port": 3000,
+					"region": "eu",
+					"verbose": 0,
+					"force": false,
+					"tag": [],
+					"define": {}
+				},
+				"args": {},
+				"sources": {
+					"flags": {
+						"name": {
+							"stage": "config",
+							"configPath": "app.name"
+						},
+						"port": {
+							"stage": "config",
+							"configPath": "app.port"
+						},
+						"region": {
+							"stage": "config",
+							"configPath": "app.region"
+						},
+						"verbose": {
+							"stage": "default"
+						},
+						"force": {
+							"stage": "default"
+						},
+						"tag": {
+							"stage": "default"
+						},
+						"define": {
+							"stage": "default"
+						}
+					},
+					"args": {}
+				}
+			}
+		},
+		{
+			"schema": "basic",
+			"argv": [
+				"-vvvf",
+				"-p8080",
+				"-nAda",
+				"deploy"
+			],
+			"options": {},
+			"expected": {
+				"flags": {
+					"name": "Ada",
+					"port": 8080,
+					"verbose": 3,
+					"force": true,
+					"tag": [],
+					"define": {}
+				},
+				"args": {
+					"target": "deploy"
+				},
+				"sources": {
+					"flags": {
+						"name": {
+							"stage": "cli"
+						},
+						"port": {
+							"stage": "cli"
+						},
+						"verbose": {
+							"stage": "cli"
+						},
+						"force": {
+							"stage": "cli"
+						},
+						"tag": {
+							"stage": "default"
+						},
+						"define": {
+							"stage": "default"
+						}
+					},
+					"args": {
+						"target": {
+							"stage": "cli"
+						}
+					}
+				}
+			}
+		},
+		{
+			"schema": "basic",
+			"argv": [
+				"--force=false",
+				"--no-force",
+				"--force"
+			],
+			"options": {},
+			"expected": {
+				"flags": {
+					"force": true,
+					"name": "default",
+					"verbose": 0,
+					"tag": [],
+					"define": {}
+				},
+				"args": {},
+				"sources": {
+					"flags": {
+						"force": {
+							"stage": "cli"
+						},
+						"name": {
+							"stage": "default"
+						},
+						"verbose": {
+							"stage": "default"
+						},
+						"tag": {
+							"stage": "default"
+						},
+						"define": {
+							"stage": "default"
+						}
+					},
+					"args": {}
+				}
+			}
+		},
+		{
+			"schema": "basic",
+			"argv": [
+				"--name=one",
+				"--name=two"
+			],
+			"options": {},
+			"expected": {
+				"flags": {
+					"name": "two",
+					"verbose": 0,
+					"force": false,
+					"tag": [],
+					"define": {}
+				},
+				"args": {},
+				"sources": {
+					"flags": {
+						"name": {
+							"stage": "cli"
+						},
+						"verbose": {
+							"stage": "default"
+						},
+						"force": {
+							"stage": "default"
+						},
+						"tag": {
+							"stage": "default"
+						},
+						"define": {
+							"stage": "default"
+						}
+					},
+					"args": {}
+				}
+			}
+		},
+		{
+			"schema": "basic",
+			"argv": [
+				"--port=-42"
+			],
+			"options": {},
+			"expected": {
+				"flags": {
+					"port": -42,
+					"name": "default",
+					"verbose": 0,
+					"force": false,
+					"tag": [],
+					"define": {}
+				},
+				"args": {},
+				"sources": {
+					"flags": {
+						"port": {
+							"stage": "cli"
+						},
+						"name": {
+							"stage": "default"
+						},
+						"verbose": {
+							"stage": "default"
+						},
+						"force": {
+							"stage": "default"
+						},
+						"tag": {
+							"stage": "default"
+						},
+						"define": {
+							"stage": "default"
+						}
+					},
+					"args": {}
+				}
+			}
+		},
+		{
+			"schema": "basic",
+			"argv": [
+				"--verbose=2",
+				"-vv"
+			],
+			"options": {},
+			"expected": {
+				"flags": {
+					"verbose": 4,
+					"name": "default",
+					"force": false,
+					"tag": [],
+					"define": {}
+				},
+				"args": {},
+				"sources": {
+					"flags": {
+						"verbose": {
+							"stage": "cli"
+						},
+						"name": {
+							"stage": "default"
+						},
+						"force": {
+							"stage": "default"
+						},
+						"tag": {
+							"stage": "default"
+						},
+						"define": {
+							"stage": "default"
+						}
+					},
+					"args": {}
+				}
+			}
+		},
+		{
+			"schema": "basic",
+			"argv": [
+				"-vv",
+				"--verbose=4",
+				"-v"
+			],
+			"options": {},
+			"expected": {
+				"flags": {
+					"verbose": 5,
+					"name": "default",
+					"force": false,
+					"tag": [],
+					"define": {}
+				},
+				"args": {},
+				"sources": {
+					"flags": {
+						"verbose": {
+							"stage": "cli"
+						},
+						"name": {
+							"stage": "default"
+						},
+						"force": {
+							"stage": "default"
+						},
+						"tag": {
+							"stage": "default"
+						},
+						"define": {
+							"stage": "default"
+						}
+					},
+					"args": {}
+				}
+			}
+		},
+		{
+			"schema": "basic",
+			"argv": [
+				"--tag",
+				"a,b",
+				"--tag",
+				"b,c"
+			],
+			"options": {},
+			"expected": {
+				"flags": {
+					"tag": [
+						"a",
+						"b",
+						"c"
+					],
+					"name": "default",
+					"verbose": 0,
+					"force": false,
+					"define": {}
+				},
+				"args": {},
+				"sources": {
+					"flags": {
+						"tag": {
+							"stage": "cli"
+						},
+						"name": {
+							"stage": "default"
+						},
+						"verbose": {
+							"stage": "default"
+						},
+						"force": {
+							"stage": "default"
+						},
+						"define": {
+							"stage": "default"
+						}
+					},
+					"args": {}
+				}
+			}
+		},
+		{
+			"schema": "basic",
+			"argv": [],
+			"options": {
+				"env": {
+					"TAGS": "a,b,a"
+				}
+			},
+			"expected": {
+				"flags": {
+					"tag": [
+						"a",
+						"b"
+					],
+					"name": "default",
+					"verbose": 0,
+					"force": false,
+					"define": {}
+				},
+				"args": {},
+				"sources": {
+					"flags": {
+						"tag": {
+							"stage": "env",
+							"envVar": "TAGS"
+						},
+						"name": {
+							"stage": "default"
+						},
+						"verbose": {
+							"stage": "default"
+						},
+						"force": {
+							"stage": "default"
+						},
+						"define": {
+							"stage": "default"
+						}
+					},
+					"args": {}
+				}
+			}
+		},
+		{
+			"schema": "basic",
+			"argv": [
+				"-Dx=one",
+				"--define=x=two",
+				"--define=y=a=b"
+			],
+			"options": {},
+			"expected": {
+				"flags": {
+					"define": {
+						"x": "two",
+						"y": "a=b"
+					},
+					"name": "default",
+					"verbose": 0,
+					"force": false,
+					"tag": []
+				},
+				"args": {},
+				"sources": {
+					"flags": {
+						"define": {
+							"stage": "cli"
+						},
+						"name": {
+							"stage": "default"
+						},
+						"verbose": {
+							"stage": "default"
+						},
+						"force": {
+							"stage": "default"
+						},
+						"tag": {
+							"stage": "default"
+						}
+					},
+					"args": {}
+				}
+			}
+		},
+		{
+			"schema": "basic",
+			"argv": [],
+			"options": {
+				"env": {
+					"DEFINES": "x=one,y=two"
+				}
+			},
+			"expected": {
+				"flags": {
+					"define": {
+						"x": "one",
+						"y": "two"
+					},
+					"name": "default",
+					"verbose": 0,
+					"force": false,
+					"tag": []
+				},
+				"args": {},
+				"sources": {
+					"flags": {
+						"define": {
+							"stage": "env",
+							"envVar": "DEFINES"
+						},
+						"name": {
+							"stage": "default"
+						},
+						"verbose": {
+							"stage": "default"
+						},
+						"force": {
+							"stage": "default"
+						},
+						"tag": {
+							"stage": "default"
+						}
+					},
+					"args": {}
+				}
+			}
+		},
+		{
+			"schema": "basic",
+			"argv": [
+				"--output-path=somewhere"
+			],
+			"options": {},
+			"expected": {
+				"flags": {
+					"outputPath": "somewhere",
+					"name": "default",
+					"verbose": 0,
+					"force": false,
+					"tag": [],
+					"define": {}
+				},
+				"args": {},
+				"sources": {
+					"flags": {
+						"outputPath": {
+							"stage": "cli"
+						},
+						"name": {
+							"stage": "default"
+						},
+						"verbose": {
+							"stage": "default"
+						},
+						"force": {
+							"stage": "default"
+						},
+						"tag": {
+							"stage": "default"
+						},
+						"define": {
+							"stage": "default"
+						}
+					},
+					"args": {}
+				}
+			}
+		},
+		{
+			"schema": "basic",
+			"argv": [
+				"--outputPath=somewhere"
+			],
+			"options": {},
+			"expected": {
+				"flags": {
+					"outputPath": "somewhere",
+					"name": "default",
+					"verbose": 0,
+					"force": false,
+					"tag": [],
+					"define": {}
+				},
+				"args": {},
+				"sources": {
+					"flags": {
+						"outputPath": {
+							"stage": "cli"
+						},
+						"name": {
+							"stage": "default"
+						},
+						"verbose": {
+							"stage": "default"
+						},
+						"force": {
+							"stage": "default"
+						},
+						"tag": {
+							"stage": "default"
+						},
+						"define": {
+							"stage": "default"
+						}
+					},
+					"args": {}
+				}
+			}
+		},
+		{
+			"schema": "basic",
+			"argv": [
+				"--timeout=1h30m"
+			],
+			"options": {},
+			"expected": {
+				"flags": {
+					"timeout": 5400000,
+					"name": "default",
+					"verbose": 0,
+					"force": false,
+					"tag": [],
+					"define": {}
+				},
+				"args": {},
+				"sources": {
+					"flags": {
+						"timeout": {
+							"stage": "cli"
+						},
+						"name": {
+							"stage": "default"
+						},
+						"verbose": {
+							"stage": "default"
+						},
+						"force": {
+							"stage": "default"
+						},
+						"tag": {
+							"stage": "default"
+						},
+						"define": {
+							"stage": "default"
+						}
+					},
+					"args": {}
+				}
+			}
+		},
+		{
+			"schema": "basic",
+			"argv": [
+				"--size=1.5MB"
+			],
+			"options": {},
+			"expected": {
+				"flags": {
+					"size": 1572864,
+					"name": "default",
+					"verbose": 0,
+					"force": false,
+					"tag": [],
+					"define": {}
+				},
+				"args": {},
+				"sources": {
+					"flags": {
+						"size": {
+							"stage": "cli"
+						},
+						"name": {
+							"stage": "default"
+						},
+						"verbose": {
+							"stage": "default"
+						},
+						"force": {
+							"stage": "default"
+						},
+						"tag": {
+							"stage": "default"
+						},
+						"define": {
+							"stage": "default"
+						}
+					},
+					"args": {}
+				}
+			}
+		},
+		{
+			"schema": "basic",
+			"argv": [
+				"--date=2026-10-14"
+			],
+			"options": {},
+			"expected": {
+				"flags": {
+					"date": "2026-10-14T00:00:00.000Z",
+					"name": "default",
+					"verbose": 0,
+					"force": false,
+					"tag": [],
+					"define": {}
+				},
+				"args": {},
+				"sources": {
+					"flags": {
+						"date": {
+							"stage": "cli"
+						},
+						"name": {
+							"stage": "default"
+						},
+						"verbose": {
+							"stage": "default"
+						},
+						"force": {
+							"stage": "default"
+						},
+						"tag": {
+							"stage": "default"
+						},
+						"define": {
+							"stage": "default"
+						}
+					},
+					"args": {}
+				}
+			}
+		},
+		{
+			"schema": "basic",
+			"argv": [
+				"--date=2026-10-14T14:30"
+			],
+			"options": {},
+			"expected": {
+				"flags": {
+					"date": "2026-10-14T14:30:00.000Z",
+					"name": "default",
+					"verbose": 0,
+					"force": false,
+					"tag": [],
+					"define": {}
+				},
+				"args": {},
+				"sources": {
+					"flags": {
+						"date": {
+							"stage": "cli"
+						},
+						"name": {
+							"stage": "default"
+						},
+						"verbose": {
+							"stage": "default"
+						},
+						"force": {
+							"stage": "default"
+						},
+						"tag": {
+							"stage": "default"
+						},
+						"define": {
+							"stage": "default"
+						}
+					},
+					"args": {}
+				}
+			}
+		},
+		{
+			"schema": "basic",
+			"argv": [
+				"--date=2026-10-14T14:30:00+02:00"
+			],
+			"options": {},
+			"expected": {
+				"flags": {
+					"date": "2026-10-14T12:30:00.000Z",
+					"name": "default",
+					"verbose": 0,
+					"force": false,
+					"tag": [],
+					"define": {}
+				},
+				"args": {},
+				"sources": {
+					"flags": {
+						"date": {
+							"stage": "cli"
+						},
+						"name": {
+							"stage": "default"
+						},
+						"verbose": {
+							"stage": "default"
+						},
+						"force": {
+							"stage": "default"
+						},
+						"tag": {
+							"stage": "default"
+						},
+						"define": {
+							"stage": "default"
+						}
+					},
+					"args": {}
+				}
+			}
+		},
+		{
+			"schema": "basic",
+			"argv": [
+				"--url=https://example.com"
+			],
+			"options": {},
+			"expected": {
+				"flags": {
+					"url": "https://example.com/",
+					"name": "default",
+					"verbose": 0,
+					"force": false,
+					"tag": [],
+					"define": {}
+				},
+				"args": {},
+				"sources": {
+					"flags": {
+						"url": {
+							"stage": "cli"
+						},
+						"name": {
+							"stage": "default"
+						},
+						"verbose": {
+							"stage": "default"
+						},
+						"force": {
+							"stage": "default"
+						},
+						"tag": {
+							"stage": "default"
+						},
+						"define": {
+							"stage": "default"
+						}
+					},
+					"args": {}
+				}
+			}
+		},
+		{
+			"schema": "basic",
+			"argv": [
+				"--",
+				"--json"
+			],
+			"options": {},
+			"expected": {
+				"flags": {
+					"name": "default",
+					"verbose": 0,
+					"force": false,
+					"tag": [],
+					"define": {}
+				},
+				"args": {
+					"target": "--json"
+				},
+				"sources": {
+					"flags": {
+						"name": {
+							"stage": "default"
+						},
+						"verbose": {
+							"stage": "default"
+						},
+						"force": {
+							"stage": "default"
+						},
+						"tag": {
+							"stage": "default"
+						},
+						"define": {
+							"stage": "default"
+						}
+					},
+					"args": {
+						"target": {
+							"stage": "cli"
+						}
+					}
+				}
+			}
+		},
+		{
+			"schema": "basic",
+			"argv": [],
+			"options": {
+				"env": {
+					"FORCE": "yes",
+					"PORT": "42",
+					"TIMEOUT": "250ms"
+				}
+			},
+			"expected": {
+				"flags": {
+					"port": 42,
+					"force": true,
+					"timeout": 250,
+					"name": "default",
+					"verbose": 0,
+					"tag": [],
+					"define": {}
+				},
+				"args": {},
+				"sources": {
+					"flags": {
+						"port": {
+							"stage": "env",
+							"envVar": "PORT"
+						},
+						"force": {
+							"stage": "env",
+							"envVar": "FORCE"
+						},
+						"timeout": {
+							"stage": "env",
+							"envVar": "TIMEOUT"
+						},
+						"name": {
+							"stage": "default"
+						},
+						"verbose": {
+							"stage": "default"
+						},
+						"tag": {
+							"stage": "default"
+						},
+						"define": {
+							"stage": "default"
+						}
+					},
+					"args": {}
+				}
+			}
+		},
+		{
+			"schema": "stdin",
+			"argv": [],
+			"options": {
+				"stdinData": "pipe\n",
+				"env": {
+					"TEXT": "env"
+				}
+			},
+			"expected": {
+				"flags": {
+					"text": "pipe\n"
+				},
+				"args": {},
+				"sources": {
+					"flags": {
+						"text": {
+							"stage": "stdin",
+							"via": "stdin",
+							"trigger": "fallback"
+						}
+					},
+					"args": {}
+				}
+			}
+		},
+		{
+			"schema": "stdin",
+			"argv": [
+				"--text",
+				"-"
+			],
+			"options": {
+				"stdinData": "pipe\n",
+				"env": {
+					"TEXT": "env"
+				}
+			},
+			"expected": {
+				"flags": {
+					"text": "pipe\n"
+				},
+				"args": {},
+				"sources": {
+					"flags": {
+						"text": {
+							"stage": "cli",
+							"via": "stdin",
+							"trigger": "dash"
+						}
+					},
+					"args": {}
+				}
+			}
+		},
+		{
+			"schema": "stdin",
+			"argv": [
+				"--text",
+				"cli"
+			],
+			"options": {
+				"stdinData": "pipe\n"
+			},
+			"expected": {
+				"flags": {
+					"text": "cli"
+				},
+				"args": {},
+				"sources": {
+					"flags": {
+						"text": {
+							"stage": "cli"
+						}
+					},
+					"args": {}
+				}
+			}
+		},
+		{
+			"schema": "stdin",
+			"argv": [],
+			"options": {},
+			"expected": {
+				"flags": {
+					"text": "default"
+				},
+				"args": {},
+				"sources": {
+					"flags": {
+						"text": {
+							"stage": "default"
+						}
+					},
+					"args": {}
+				}
+			}
+		},
+		{
+			"schema": "list",
+			"argv": [
+				"--tag",
+				"before",
+				"--tag",
+				"-",
+				"--tag",
+				"after"
+			],
+			"options": {
+				"stdinData": "a\nb\n"
+			},
+			"expected": {
+				"flags": {
+					"tag": [
+						"before",
+						"a",
+						"b",
+						"after"
+					]
+				},
+				"args": {},
+				"sources": {
+					"flags": {
+						"tag": {
+							"stage": "cli",
+							"via": "stdin",
+							"trigger": "dash"
+						}
+					},
+					"args": {}
+				}
+			}
+		},
+		{
+			"schema": "list",
+			"argv": [],
+			"options": {
+				"stdinData": "a\n\nb\n"
+			},
+			"expected": {
+				"flags": {
+					"tag": [
+						"a",
+						"",
+						"b"
+					]
+				},
+				"args": {},
+				"sources": {
+					"flags": {
+						"tag": {
+							"stage": "stdin",
+							"via": "stdin",
+							"trigger": "fallback"
+						}
+					},
+					"args": {}
+				}
+			}
+		},
+		{
+			"schema": "trim",
+			"argv": [
+				"-"
+			],
+			"options": {
+				"stdinData": "./dir\r\n"
+			},
+			"expected": {
+				"flags": {},
+				"args": {
+					"path": "./dir"
+				},
+				"sources": {
+					"flags": {},
+					"args": {
+						"path": {
+							"stage": "cli",
+							"via": "stdin",
+							"trigger": "dash"
+						}
+					}
+				}
+			}
+		},
+		{
+			"schema": "basic",
+			"argv": [
+				"--unknown"
+			],
+			"options": {},
+			"error": {
+				"code": "UNKNOWN_FLAG",
+				"exitCode": 2
+			}
+		},
+		{
+			"schema": "basic",
+			"argv": [
+				"--name"
+			],
+			"options": {},
+			"error": {
+				"code": "MISSING_VALUE",
+				"exitCode": 2
+			}
+		},
+		{
+			"schema": "basic",
+			"argv": [
+				"--force=maybe"
+			],
+			"options": {},
+			"error": {
+				"code": "INVALID_VALUE",
+				"exitCode": 2
+			}
+		},
+		{
+			"schema": "basic",
+			"argv": [
+				"--no-force=true"
+			],
+			"options": {},
+			"error": {
+				"code": "INVALID_VALUE",
+				"exitCode": 2
+			}
+		},
+		{
+			"schema": "basic",
+			"argv": [
+				"--region=ap"
+			],
+			"options": {},
+			"error": {
+				"code": "INVALID_VALUE",
+				"exitCode": 2
+			}
+		},
+		{
+			"schema": "basic",
+			"argv": [
+				"--port=NaN"
+			],
+			"options": {},
+			"error": {
+				"code": "INVALID_VALUE",
+				"exitCode": 2
+			}
+		},
+		{
+			"schema": "basic",
+			"argv": [
+				"--port",
+				"-42"
+			],
+			"options": {},
+			"error": {
+				"code": "MISSING_VALUE",
+				"exitCode": 2
+			}
+		},
+		{
+			"schema": "basic",
+			"argv": [
+				"--date=2026-02-31"
+			],
+			"options": {},
+			"error": {
+				"code": "INVALID_VALUE",
+				"exitCode": 2
+			}
+		},
+		{
+			"schema": "basic",
+			"argv": [
+				"--timeout=1x"
+			],
+			"options": {},
+			"error": {
+				"code": "INVALID_VALUE",
+				"exitCode": 2
+			}
+		},
+		{
+			"schema": "basic",
+			"argv": [
+				"--define=invalid"
+			],
+			"options": {},
+			"error": {
+				"code": "INVALID_VALUE",
+				"exitCode": 2
+			}
+		},
+		{
+			"schema": "basic",
+			"argv": [
+				"one",
+				"two"
+			],
+			"options": {},
+			"error": {
+				"code": "UNEXPECTED_POSITIONAL",
+				"exitCode": 2
+			}
+		},
+		{
+			"schema": "basic",
+			"argv": [],
+			"options": {
+				"env": {
+					"REGION": "ap"
+				}
+			},
+			"error": {
+				"code": "INVALID_ENUM",
+				"exitCode": 2
+			}
+		},
+		{
+			"schema": "required",
+			"argv": [],
+			"options": {},
+			"error": {
+				"code": "REQUIRED_FLAG",
+				"exitCode": 2
+			}
+		},
+		{
+			"schema": "required",
+			"argv": [
+				"--token=x"
+			],
+			"options": {},
+			"error": {
+				"code": "REQUIRED_ARG",
+				"exitCode": 2
+			}
+		},
+		{
+			"schema": "required",
+			"argv": [
+				"target"
+			],
+			"options": {},
+			"error": {
+				"code": "REQUIRED_FLAG",
+				"exitCode": 2
+			}
+		},
+		{
+			"schema": "stdin",
+			"argv": [
+				"--text",
+				"-"
+			],
+			"options": {},
+			"expected": {
+				"flags": {
+					"text": "default"
+				},
+				"args": {},
+				"sources": {
+					"flags": {
+						"text": {
+							"stage": "default"
+						}
+					},
+					"args": {}
+				}
+			}
+		},
+		{
+			"schema": "basic",
+			"argv": [
+				"--tag=a,,b,"
+			],
+			"options": {},
+			"expected": {
+				"flags": {
+					"tag": [
+						"a",
+						"b"
+					],
+					"name": "default",
+					"verbose": 0,
+					"force": false,
+					"define": {}
+				},
+				"args": {},
+				"sources": {
+					"flags": {
+						"tag": {
+							"stage": "cli"
+						},
+						"name": {
+							"stage": "default"
+						},
+						"verbose": {
+							"stage": "default"
+						},
+						"force": {
+							"stage": "default"
+						},
+						"define": {
+							"stage": "default"
+						}
+					},
+					"args": {}
+				}
+			}
+		},
+		{
+			"schema": "basic",
+			"argv": [
+				"--tag="
+			],
+			"options": {},
+			"expected": {
+				"flags": {
+					"tag": [],
+					"name": "default",
+					"verbose": 0,
+					"force": false,
+					"define": {}
+				},
+				"args": {},
+				"sources": {
+					"flags": {
+						"tag": {
+							"stage": "cli"
+						},
+						"name": {
+							"stage": "default"
+						},
+						"verbose": {
+							"stage": "default"
+						},
+						"force": {
+							"stage": "default"
+						},
+						"define": {
+							"stage": "default"
+						}
+					},
+					"args": {}
+				}
+			}
+		},
+		{
+			"schema": "basic",
+			"argv": [],
+			"options": {
+				"env": {
+					"TAGS": ""
+				}
+			},
+			"expected": {
+				"flags": {
+					"tag": [],
+					"name": "default",
+					"verbose": 0,
+					"force": false,
+					"define": {}
+				},
+				"args": {},
+				"sources": {
+					"flags": {
+						"tag": {
+							"stage": "env",
+							"envVar": "TAGS"
+						},
+						"name": {
+							"stage": "default"
+						},
+						"verbose": {
+							"stage": "default"
+						},
+						"force": {
+							"stage": "default"
+						},
+						"define": {
+							"stage": "default"
+						}
+					},
+					"args": {}
+				}
+			}
+		},
+		{
+			"schema": "basic",
+			"argv": [],
+			"options": {
+				"env": {
+					"TAGS": ",a,,b,"
+				}
+			},
+			"expected": {
+				"flags": {
+					"tag": [
+						"a",
+						"b"
+					],
+					"name": "default",
+					"verbose": 0,
+					"force": false,
+					"define": {}
+				},
+				"args": {},
+				"sources": {
+					"flags": {
+						"tag": {
+							"stage": "env",
+							"envVar": "TAGS"
+						},
+						"name": {
+							"stage": "default"
+						},
+						"verbose": {
+							"stage": "default"
+						},
+						"force": {
+							"stage": "default"
+						},
+						"define": {
+							"stage": "default"
+						}
+					},
+					"args": {}
+				}
+			}
+		},
+		{
+			"schema": "basic",
+			"argv": [
+				"--port=0x10"
+			],
+			"options": {},
+			"expected": {
+				"flags": {
+					"port": 16,
+					"name": "default",
+					"verbose": 0,
+					"force": false,
+					"tag": [],
+					"define": {}
+				},
+				"args": {},
+				"sources": {
+					"flags": {
+						"port": {
+							"stage": "cli"
+						},
+						"name": {
+							"stage": "default"
+						},
+						"verbose": {
+							"stage": "default"
+						},
+						"force": {
+							"stage": "default"
+						},
+						"tag": {
+							"stage": "default"
+						},
+						"define": {
+							"stage": "default"
+						}
+					},
+					"args": {}
+				}
+			}
+		},
+		{
+			"schema": "basic",
+			"argv": [
+				"--port=1e3"
+			],
+			"options": {},
+			"expected": {
+				"flags": {
+					"port": 1000,
+					"name": "default",
+					"verbose": 0,
+					"force": false,
+					"tag": [],
+					"define": {}
+				},
+				"args": {},
+				"sources": {
+					"flags": {
+						"port": {
+							"stage": "cli"
+						},
+						"name": {
+							"stage": "default"
+						},
+						"verbose": {
+							"stage": "default"
+						},
+						"force": {
+							"stage": "default"
+						},
+						"tag": {
+							"stage": "default"
+						},
+						"define": {
+							"stage": "default"
+						}
+					},
+					"args": {}
+				}
+			}
+		},
+		{
+			"schema": "basic",
+			"argv": [
+				"--port="
+			],
+			"options": {},
+			"error": {
+				"code": "INVALID_VALUE",
+				"exitCode": 2
+			}
+		},
+		{
+			"schema": "basic",
+			"argv": [
+				"--port=  "
+			],
+			"options": {},
+			"error": {
+				"code": "INVALID_VALUE",
+				"exitCode": 2
+			}
+		},
+		{
+			"schema": "basic",
+			"argv": [],
+			"options": {
+				"env": {
+					"FORCE": " yes "
+				}
+			},
+			"error": {
+				"code": "TYPE_MISMATCH",
+				"exitCode": 2
+			}
+		},
+		{
+			"schema": "basic",
+			"argv": [],
+			"options": {
+				"env": {
+					"FORCE": ""
+				}
+			},
+			"expected": {
+				"flags": {
+					"force": false,
+					"name": "default",
+					"verbose": 0,
+					"tag": [],
+					"define": {}
+				},
+				"args": {},
+				"sources": {
+					"flags": {
+						"force": {
+							"stage": "env",
+							"envVar": "FORCE"
+						},
+						"name": {
+							"stage": "default"
+						},
+						"verbose": {
+							"stage": "default"
+						},
+						"tag": {
+							"stage": "default"
+						},
+						"define": {
+							"stage": "default"
+						}
+					},
+					"args": {}
+				}
+			}
+		},
+		{
+			"schema": "basic",
+			"argv": [],
+			"options": {
+				"config": {
+					"app": {
+						"port": "42",
+						"name": 123
+					}
+				}
+			},
+			"expected": {
+				"flags": {
+					"name": "123",
+					"port": 42,
+					"verbose": 0,
+					"force": false,
+					"tag": [],
+					"define": {}
+				},
+				"args": {},
+				"sources": {
+					"flags": {
+						"name": {
+							"stage": "config",
+							"configPath": "app.name"
+						},
+						"port": {
+							"stage": "config",
+							"configPath": "app.port"
+						},
+						"verbose": {
+							"stage": "default"
+						},
+						"force": {
+							"stage": "default"
+						},
+						"tag": {
+							"stage": "default"
+						},
+						"define": {
+							"stage": "default"
+						}
+					},
+					"args": {}
+				}
+			}
+		},
+		{
+			"schema": "list",
+			"argv": [
+				"--tag",
+				"-"
+			],
+			"options": {
+				"stdinData": ""
+			},
+			"expected": {
+				"flags": {
+					"tag": []
+				},
+				"args": {},
+				"sources": {
+					"flags": {
+						"tag": {
+							"stage": "cli",
+							"via": "stdin",
+							"trigger": "dash"
+						}
+					},
+					"args": {}
+				}
+			}
+		},
+		{
+			"schema": "list",
+			"argv": [],
+			"options": {
+				"stdinData": ""
+			},
+			"expected": {
+				"flags": {
+					"tag": []
+				},
+				"args": {},
+				"sources": {
+					"flags": {
+						"tag": {
+							"stage": "stdin",
+							"via": "stdin",
+							"trigger": "fallback"
+						}
+					},
+					"args": {}
+				}
+			}
+		},
+		{
+			"schema": "list",
+			"argv": [
+				"--tag",
+				"before",
+				"--tag",
+				"-"
+			],
+			"options": {},
+			"error": {
+				"code": "MISSING_STDIN",
+				"exitCode": 2
+			}
+		},
+		{
+			"schema": "stdin",
+			"argv": [
+				"--text",
+				"-"
+			],
+			"options": {
+				"stdinData": ""
+			},
+			"expected": {
+				"flags": {
+					"text": ""
+				},
+				"args": {},
+				"sources": {
+					"flags": {
+						"text": {
+							"stage": "cli",
+							"via": "stdin",
+							"trigger": "dash"
+						}
+					},
+					"args": {}
+				}
+			}
+		},
+		{
+			"schema": "stdin",
+			"argv": [],
+			"options": {
+				"stdinData": ""
+			},
+			"expected": {
+				"flags": {
+					"text": ""
+				},
+				"args": {},
+				"sources": {
+					"flags": {
+						"text": {
+							"stage": "stdin",
+							"via": "stdin",
+							"trigger": "fallback"
+						}
+					},
+					"args": {}
+				}
+			}
+		},
+		{
+			"schema": "arraysjson",
+			"argv": [],
+			"options": {
+				"env": {
+					"VALUE": "[1,2,3]"
+				}
+			},
+			"expected": {
+				"flags": {
+					"value": [
+						1,
+						2,
+						3
+					]
+				},
+				"args": {},
+				"sources": {
+					"flags": {
+						"value": {
+							"stage": "env",
+							"envVar": "VALUE"
+						}
+					},
+					"args": {}
+				}
+			}
+		},
+		{
+			"schema": "arraysjson",
+			"argv": [],
+			"options": {
+				"stdinData": "[1,2]"
+			},
+			"expected": {
+				"flags": {
+					"value": [
+						1,
+						2
+					]
+				},
+				"args": {},
+				"sources": {
+					"flags": {
+						"value": {
+							"stage": "stdin",
+							"via": "stdin",
+							"trigger": "fallback"
+						}
+					},
+					"args": {}
+				}
+			}
+		},
+		{
+			"schema": "arraysjson",
+			"argv": [],
+			"options": {
+				"config": {
+					"value": [
+						1,
+						2
+					]
+				}
+			},
+			"expected": {
+				"flags": {
+					"value": [
+						1,
+						2
+					]
+				},
+				"args": {},
+				"sources": {
+					"flags": {
+						"value": {
+							"stage": "config",
+							"configPath": "value"
+						}
+					},
+					"args": {}
+				}
+			}
+		},
+		{
+			"schema": "arraysjson",
+			"argv": [],
+			"options": {
+				"env": {
+					"VALUE": "invalid"
+				}
+			},
+			"error": {
+				"code": "TYPE_MISMATCH",
+				"exitCode": 2
+			}
+		},
+		{
+			"schema": "arraysjson",
+			"argv": [],
+			"options": {
+				"env": {
+					"VALUE": "{}"
+				}
+			},
+			"error": {
+				"code": "TYPE_MISMATCH",
+				"exitCode": 2
+			}
+		},
+		{
+			"schema": "arraysjson",
+			"argv": [],
+			"options": {
+				"env": {
+					"VALUE": "[1,\"bad\"]"
+				}
+			},
+			"error": {
+				"code": "TYPE_MISMATCH",
+				"exitCode": 2
+			}
+		},
+		{
+			"schema": "entriesjson",
+			"argv": [],
+			"options": {
+				"env": {
+					"VALUE": "{\"x\":1,\"y\":2}"
+				}
+			},
+			"expected": {
+				"flags": {
+					"value": {
+						"x": 1,
+						"y": 2
+					}
+				},
+				"args": {},
+				"sources": {
+					"flags": {
+						"value": {
+							"stage": "env",
+							"envVar": "VALUE"
+						}
+					},
+					"args": {}
+				}
+			}
+		},
+		{
+			"schema": "entriesjson",
+			"argv": [],
+			"options": {
+				"stdinData": "{\"x\":1}"
+			},
+			"expected": {
+				"flags": {
+					"value": {
+						"x": 1
+					}
+				},
+				"args": {},
+				"sources": {
+					"flags": {
+						"value": {
+							"stage": "stdin",
+							"via": "stdin",
+							"trigger": "fallback"
+						}
+					},
+					"args": {}
+				}
+			}
+		},
+		{
+			"schema": "entriesjson",
+			"argv": [],
+			"options": {
+				"config": {
+					"value": {
+						"x": 1,
+						"y": 2
+					}
+				}
+			},
+			"expected": {
+				"flags": {
+					"value": {
+						"x": 1,
+						"y": 2
+					}
+				},
+				"args": {},
+				"sources": {
+					"flags": {
+						"value": {
+							"stage": "config",
+							"configPath": "value"
+						}
+					},
+					"args": {}
+				}
+			}
+		},
+		{
+			"schema": "entriesjson",
+			"argv": [],
+			"options": {
+				"env": {
+					"VALUE": "[]"
+				}
+			},
+			"error": {
+				"code": "TYPE_MISMATCH",
+				"exitCode": 2
+			}
+		},
+		{
+			"schema": "bounds",
+			"argv": [
+				"--port=1",
+				"--name=abc"
+			],
+			"options": {},
+			"expected": {
+				"flags": {
+					"port": 1,
+					"name": "abc"
+				},
+				"args": {},
+				"sources": {
+					"flags": {
+						"port": {
+							"stage": "cli"
+						},
+						"name": {
+							"stage": "cli"
+						}
+					},
+					"args": {}
+				}
+			}
+		},
+		{
+			"schema": "bounds",
+			"argv": [
+				"--port=0"
+			],
+			"options": {},
+			"error": {
+				"code": "INVALID_VALUE",
+				"exitCode": 2
+			}
+		},
+		{
+			"schema": "bounds",
+			"argv": [
+				"--port=1.5"
+			],
+			"options": {},
+			"error": {
+				"code": "INVALID_VALUE",
+				"exitCode": 2
+			}
+		},
+		{
+			"schema": "bounds",
+			"argv": [
+				"--port=11"
+			],
+			"options": {},
+			"error": {
+				"code": "INVALID_VALUE",
+				"exitCode": 2
+			}
+		},
+		{
+			"schema": "bounds",
+			"argv": [
+				"--name="
+			],
+			"options": {},
+			"error": {
+				"code": "INVALID_VALUE",
+				"exitCode": 2
+			}
+		},
+		{
+			"schema": "bounds",
+			"argv": [
+				"--name=Ada"
+			],
+			"options": {},
+			"error": {
+				"code": "INVALID_VALUE",
+				"exitCode": 2
+			}
+		},
+		{
+			"schema": "bounds",
+			"argv": [],
+			"options": {
+				"env": {
+					"PORT": "0"
+				}
+			},
+			"error": {
+				"code": "CONSTRAINT_VIOLATED",
+				"exitCode": 2
+			}
+		},
+		{
+			"schema": "bounds",
+			"argv": [],
+			"options": {
+				"env": {
+					"NAME": "ABC"
+				}
+			},
+			"error": {
+				"code": "CONSTRAINT_VIOLATED",
+				"exitCode": 2
+			}
+		},
+		{
+			"schema": "rest",
+			"argv": [
+				"1",
+				"2",
+				"3"
+			],
+			"options": {},
+			"expected": {
+				"flags": {},
+				"args": {
+					"value": [
+						1,
+						2,
+						3
+					]
+				},
+				"sources": {
+					"flags": {},
+					"args": {
+						"value": {
+							"stage": "cli"
+						}
+					}
+				}
+			}
+		},
+		{
+			"schema": "rest",
+			"argv": [],
+			"options": {},
+			"error": {
+				"code": "REQUIRED_ARG",
+				"exitCode": 2
+			}
+		},
+		{
+			"schema": "rest",
+			"argv": [
+				"not-a-number"
+			],
+			"options": {},
+			"error": {
+				"code": "INVALID_VALUE",
+				"exitCode": 2
+			}
+		},
+		{
+			"schema": "entriesjson",
+			"argv": [],
+			"options": {
+				"config": {
+					"value": []
+				}
+			},
+			"expected": {
+				"flags": {
+					"value": {}
+				},
+				"args": {},
+				"sources": {
+					"flags": {
+						"value": {
+							"stage": "config",
+							"configPath": "value"
+						}
+					},
+					"args": {}
+				}
+			}
+		},
+		{
+			"schema": "entriesjson",
+			"argv": [],
+			"options": {
+				"config": {
+					"value": [
+						"x=1"
+					]
+				}
+			},
+			"error": {
+				"code": "TYPE_MISMATCH",
+				"exitCode": 2
+			}
+		},
+		{
+			"schema": "entriesrest",
+			"argv": [
+				"x=one",
+				"y=two"
+			],
+			"options": {},
+			"expected": {
+				"flags": {},
+				"args": {
+					"value": {
+						"x": "one",
+						"y": "two"
+					}
+				},
+				"sources": {
+					"flags": {},
+					"args": {
+						"value": {
+							"stage": "cli"
+						}
+					}
+				}
+			}
+		},
+		{
+			"schema": "entriesrest",
+			"argv": [
+				"x=one",
+				"x=two"
+			],
+			"options": {},
+			"expected": {
+				"flags": {},
+				"args": {
+					"value": {
+						"x": "two"
+					}
+				},
+				"sources": {
+					"flags": {},
+					"args": {
+						"value": {
+							"stage": "cli"
+						}
+					}
+				}
+			}
+		},
+		{
+			"schema": "entriesrest",
+			"argv": [],
+			"options": {},
+			"error": {
+				"code": "REQUIRED_ARG",
+				"exitCode": 2
+			}
+		}
+	]
+}

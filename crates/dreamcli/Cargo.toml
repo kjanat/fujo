@@ -1,0 +1,26 @@
+[package]
+name                   = "dreamcli"
+version.workspace      = true
+authors.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+description            = "Schema-first, typed Rust CLI framework"
+license.workspace      = true
+
+[dependencies]
+dreamcli-complete.workspace = true
+dreamcli-core.workspace     = true
+dreamcli-output.workspace   = true
+rpassword                   = "7"
+serde.workspace             = true
+serde_json.workspace        = true
+unicode-width.workspace     = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[features]
+shell-tests = []
+
+[lints]
+workspace = true

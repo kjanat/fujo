@@ -1,0 +1,14 @@
+[package]
+name                   = "dreamcli-complete"
+version.workspace      = true
+authors.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+description            = "Schema-driven Bash, Zsh, Fish, and PowerShell completions"
+license.workspace      = true
+
+[dependencies]
+dreamcli-core.workspace = true
+
+[lints]
+workspace = true

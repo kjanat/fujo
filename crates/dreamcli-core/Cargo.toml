@@ -1,0 +1,19 @@
+[package]
+name                   = "dreamcli-core"
+version.workspace      = true
+authors.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+description            = "Typed schemas, argument parsing, and input resolution for DreamCLI"
+license.workspace      = true
+
+[dependencies]
+chrono.workspace         = true
+dreamcli-error.workspace = true
+regex.workspace          = true
+serde.workspace          = true
+serde_json.workspace     = true
+url.workspace            = true
+
+[lints]
+workspace = true
