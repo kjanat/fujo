@@ -1,0 +1,15 @@
+[package]
+name                   = "fujo-error"
+version.workspace      = true
+authors.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+description            = "Structured errors shared by Fujo crates"
+license.workspace      = true
+
+[dependencies]
+serde.workspace      = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

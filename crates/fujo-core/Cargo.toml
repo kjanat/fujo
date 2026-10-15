@@ -1,0 +1,28 @@
+[package]
+name                   = "fujo-core"
+version.workspace      = true
+authors.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+description            = "Typed schemas, argument parsing, and input resolution for Fujo"
+license.workspace      = true
+
+[package.metadata.docs.rs]
+all-features = true
+
+[dependencies]
+chrono               = { workspace = true, optional = true }
+fujo-error.workspace = true
+regex                = { workspace = true, optional = true }
+serde.workspace      = true
+serde_json.workspace = true
+url                  = { workspace = true, optional = true }
+
+[features]
+default = []
+chrono  = ["dep:chrono"]
+regex   = ["dep:regex"]
+url     = ["dep:url"]
+
+[lints]
+workspace = true

@@ -52,7 +52,7 @@ jobs:
           command -v pwsh
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - run: cargo test --workspace --all-features --locked
-      - run: cargo build -p dreamcli --example terminal --example async_build --locked
+      - run: cargo build -p fujo --example terminal --example async_build --locked
       - run: python scripts/check-terminal.py target/debug/examples/terminal target/debug/examples/async_build
   reference:
     name: Live TypeScript reference
@@ -60,22 +60,22 @@ jobs:
     timeout-minutes: 20
     defaults:
       run:
-        working-directory: dreamcli-rs
+        working-directory: fujo
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          path: dreamcli-rs
+          path: fujo
           persist-credentials: false
-      - uses: ./dreamcli-rs/.github/actions/setup
+      - uses: ./fujo/.github/actions/setup
         with:
-          workspace: dreamcli-rs
+          workspace: fujo
       - id: reference
         name: Read the recorded reference commit
         run: |
           python - <<'PY' >> "${GITHUB_OUTPUT}"
           import json
           import pathlib
-          fixture = pathlib.Path("crates/dreamcli/tests/fixtures/reference.json")
+          fixture = pathlib.Path("crates/fujo/tests/fixtures/reference.json")
           print("sha=" + json.loads(fixture.read_text())["sourceCommit"])
           PY
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -91,7 +91,7 @@ jobs:
         working-directory: dreamcli
       - run: bun scripts/reference-fixtures.ts --check
       - run: bun scripts/lifecycle-fixtures.ts --check
-      - run: cargo test -p dreamcli --features regex,url,chrono --test reference --test lifecycle_reference --locked
+      - run: cargo test -p fujo --features regex,url,chrono --test reference --test lifecycle_reference --locked
   features:
     name: Feature and dependency contracts
     runs-on: ubuntu-24.04
