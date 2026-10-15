@@ -3,7 +3,7 @@
 Fujo is a native Rust port of DreamCLI. The
 [DreamCLI TypeScript project](https://github.com/kjanat/dreamcli) in `../dreamcli`
 is the behavior reference, initially inspected at commit
-`f87c1672e10b27c066524a0715bfea0f714dd5bc`. The Rust implementation is organized by
+[`f87c1672e10b27c066524a0715bfea0f714dd5bc`](https://github.com/kjanat/dreamcli/commit/f87c1672e10b27c066524a0715bfea0f714dd5bc). The Rust implementation is organized by
 crate responsibilities and uses Rust types and host interfaces.
 
 ## Preserved behavior
