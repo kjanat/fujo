@@ -1,7 +1,9 @@
 # Port contract
 
-The behavior reference is `../dreamcli`, initially inspected at commit
-`f87c1672e10b27c066524a0715bfea0f714dd5bc`. The Rust implementation is organized by
+Fujo is a native Rust port of DreamCLI. The
+[DreamCLI TypeScript project](https://github.com/kjanat/dreamcli) in `../dreamcli`
+is the behavior reference, initially inspected at commit
+[`f87c1672e10b27c066524a0715bfea0f714dd5bc`](https://github.com/kjanat/dreamcli/commit/f87c1672e10b27c066524a0715bfea0f714dd5bc). The Rust implementation is organized by
 crate responsibilities and uses Rust types and host interfaces.
 
 ## Preserved behavior
@@ -126,7 +128,10 @@ depend on parsing, resolution, or completion.
 
 ## Schema documents and formats
 
-The Rust definition document uses `format: "dreamcli-rust"` and `version: 1`.
+The Rust definition document uses `format: "fujo"` and `version: 1`.
+The Fujo rename changes the former `dreamcli-rust` wire-format discriminator;
+the format version remains `1`. Consumers matching the old discriminator must
+update to `fujo`.
 It describes Rust input metadata and excludes executable callbacks. It is not the
 TypeScript definition document wire format and does not reconstruct custom Rust
 types or handlers. Input schemas use JSON Schema draft 2020-12 for the JSON

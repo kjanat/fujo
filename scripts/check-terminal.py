@@ -92,8 +92,10 @@ def spinner_frames(chunks, label):
     # Match complete UTF-8 glyphs rather than a byte character class.
     pattern = re.compile(("(" + "|".join(FRAMES) + ") " + re.escape(label)).encode())
     matches = list(pattern.finditer(raw))
-    return ({match[1] for match in matches},
-            [chunks[bisect.bisect_left(boundaries, match.end())][0] for match in matches])
+    return (
+        {match[1] for match in matches},
+        [chunks[bisect.bisect_left(boundaries, match.end())][0] for match in matches],
+    )
 
 
 code, chunks = terminal("--steps=8", "--delay=40ms", "--verbose")
@@ -152,7 +154,9 @@ print("Modes: pipes, JSON, quiet, and JSON+quiet contain no animation controls")
 
 if len(sys.argv) > 2:
     async_binary = Path(sys.argv[2])
-    code, chunks = terminal("--jobs=8", "--delay=80ms", "--profile=check", binary=async_binary)
+    code, chunks = terminal(
+        "--jobs=8", "--delay=80ms", "--profile=check", binary=async_binary
+    )
     assert code == 0, code
     raw = b"".join(data for _, data in chunks)
     distinct, times = spinner_frames(chunks, "Checking build environment")
@@ -161,11 +165,22 @@ if len(sys.argv) > 2:
     progress = re.findall(rb"Building \[[= ]{20}\] +(\d+)% (\d+)/8", raw)
     assert {int(current) for _, current in progress} == set(range(9)), progress
     visible = screen(raw.decode())
-    assert "✓ Build complete\ncheck: 8 jobs passed\nBuild invocation finished\n" in visible, visible
-    code, chunks = terminal("--jobs=2", "--delay=0ms", "--profile=check", "--quiet", "--json", binary=async_binary)
+    assert (
+        "✓ Build complete\ncheck: 8 jobs passed\nBuild invocation finished\n" in visible
+    ), visible
+    code, chunks = terminal(
+        "--jobs=2",
+        "--delay=0ms",
+        "--profile=check",
+        "--quiet",
+        "--json",
+        binary=async_binary,
+    )
     assert code == 0
     raw = b"".join(data for _, data in chunks)
     assert b"\x1b" not in raw
     assert json.loads(raw) == {"profile": "check", "jobs": 2, "status": "passed"}
-    print(f"Async TTY: {len(distinct)} spinner frames across {times[-1] - times[0]:.2f}s; "
-          "all progress positions and clean quiet JSON output")
+    print(
+        f"Async TTY: {len(distinct)} spinner frames across {times[-1] - times[0]:.2f}s; "
+        "all progress positions and clean quiet JSON output"
+    )

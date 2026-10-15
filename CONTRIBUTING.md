@@ -31,25 +31,25 @@ updates do not require editing workflow versions.
 ## Try the examples
 
 ```sh
-cargo run -p dreamcli --example async_build
-cargo run -p dreamcli --example async_build -- --delay=0ms --jobs=2 --json
-cargo run -p dreamcli --example terminal
-cargo run -p dreamcli --example terminal -- --verbose --fail-at=8
-cargo run -p dreamcli --example greet -- Ada --loud --times 2
-cargo run -p dreamcli --example greet -- --help
-cargo run -p dreamcli --example greet -- completions bash
-cargo run -p dreamcli --example deploy -- db seed --json
-cargo run -p dreamcli --features url --example release -- plan Cargo.toml --from=1.4.2 --bump=minor --json
-cargo run -p dreamcli --example batch -- plan Cargo.toml README.md -o planned-output --json
-cargo run -p dreamcli --features url --example settings -- config show --json
-cargo test -p dreamcli --features url --test example_clis
+cargo run -p fujo --example async_build
+cargo run -p fujo --example async_build -- --delay=0ms --jobs=2 --json
+cargo run -p fujo --example terminal
+cargo run -p fujo --example terminal -- --verbose --fail-at=8
+cargo run -p fujo --example greet -- Ada --loud --times 2
+cargo run -p fujo --example greet -- --help
+cargo run -p fujo --example greet -- completions bash
+cargo run -p fujo --example deploy -- db seed --json
+cargo run -p fujo --features url --example release -- plan Cargo.toml --from=1.4.2 --bump=minor --json
+cargo run -p fujo --example batch -- plan Cargo.toml README.md -o planned-output --json
+cargo run -p fujo --features url --example settings -- config show --json
+cargo test -p fujo --features url --test example_clis
 ```
 
 The deploy example uses `DEPLOY_REGION`, `DEPLOY_TOKEN`, and optional JSON config.
 It demonstrates native enums, global flags, typed derived state, and nested
 commands. It simulates deployment and does not contact an external service.
 
-The [example CLI guide](crates/dreamcli/examples/README.md) explains the larger
+The [example CLI guide](crates/fujo/examples/README.md) explains the larger
 examples, their input sources, commands, type checks, and test coverage.
 
 The terminal example deliberately runs for about five seconds so its spinner
@@ -59,7 +59,7 @@ through an actual PTY, that logs and tables stay intact, and that JSON, quiet,
 and piped modes contain no animation controls:
 
 ```sh
-cargo build -p dreamcli --example terminal --example async_build
+cargo build -p fujo --example terminal --example async_build
 python3 scripts/check-terminal.py target/debug/examples/terminal target/debug/examples/async_build
 ```
 
@@ -86,7 +86,7 @@ Verify against a live sibling checkout without changing fixtures:
 ```sh
 bun scripts/reference-fixtures.ts --check
 bun scripts/lifecycle-fixtures.ts --check
-cargo test -p dreamcli --features regex,url,chrono --test reference --test lifecycle_reference
+cargo test -p fujo --features regex,url,chrono --test reference --test lifecycle_reference
 ```
 
 Regenerate with the TypeScript checkout at `../dreamcli` and its dependencies
@@ -95,7 +95,7 @@ installed:
 ```sh
 bun scripts/reference-fixtures.ts
 bun scripts/lifecycle-fixtures.ts
-cargo test -p dreamcli --features regex,url,chrono --test reference --test lifecycle_reference
+cargo test -p fujo --features regex,url,chrono --test reference --test lifecycle_reference
 ```
 
 The generator reads the sibling checkout and writes only this repository's

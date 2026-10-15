@@ -5,7 +5,7 @@ import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-OPTIONAL = {"dreamcli-complete", "rpassword", "regex", "url", "chrono"}
+OPTIONAL = {"fujo-complete", "rpassword", "regex", "url", "chrono"}
 
 
 def cargo(*args):
@@ -19,29 +19,29 @@ def cargo(*args):
 
 cases = [
     ("minimal", ["--no-default-features"], set()),
-    ("default", [], {"dreamcli-complete", "rpassword"}),
+    ("default", [], {"fujo-complete", "rpassword"}),
     ("all", ["--all-features"], OPTIONAL),
 ]
 for feature, dependencies in [
-    ("completion", {"dreamcli-complete"}),
+    ("completion", {"fujo-complete"}),
     ("terminal-prompts", {"rpassword"}),
     ("terminal-activity", set()),
     ("regex", {"regex"}),
     ("url", {"url"}),
     ("chrono", {"chrono"}),
 ]:
-    cases.append(
-        (feature, ["--no-default-features", "--features", feature], dependencies)
-    )
+    cases.append((
+        feature,
+        ["--no-default-features", "--features", feature],
+        dependencies,
+    ))
 
 for label, flags, expected in cases:
-    cargo(
-        "clippy", "-p", "dreamcli", "--lib", "--locked", *flags, "--", "-D", "warnings"
-    )
+    cargo("clippy", "-p", "fujo", "--lib", "--locked", *flags, "--", "-D", "warnings")
     tree = cargo(
         "tree",
         "-p",
-        "dreamcli",
+        "fujo",
         "--edges",
         "normal",
         "--target",
@@ -59,15 +59,15 @@ for label, flags, expected in cases:
         raise AssertionError(
             f"{label}: expected optional dependencies {expected}, got {actual}\n{tree}"
         )
-    cargo("test", "-p", "dreamcli", "--test", "feature_contract", "--locked", *flags)
+    cargo("test", "-p", "fujo", "--test", "feature_contract", "--locked", *flags)
     print(
         f"{label}: compiled, integration tests passed; optional dependencies {sorted(actual)}",
         flush=True,
     )
 
 for package, forbidden in [
-    ("dreamcli-output", OPTIONAL | {"dreamcli", "dreamcli-core"}),
-    ("dreamcli-complete", OPTIONAL | {"dreamcli", "dreamcli-output"}),
+    ("fujo-output", OPTIONAL | {"fujo", "fujo-core"}),
+    ("fujo-complete", OPTIONAL | {"fujo", "fujo-output"}),
 ]:
     cargo("test", "-p", package, "--no-default-features", "--locked")
     tree = cargo(

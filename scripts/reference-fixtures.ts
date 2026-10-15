@@ -146,7 +146,7 @@ for (const [schema, argv, options = {}] of cases) {
 		fixtures.push({ schema, argv, options, error: { code: e.code, exitCode: e.exitCode } });
 	}
 }
-const path = resolvePath(import.meta.dir, '../crates/dreamcli/tests/fixtures/reference.json');
+const path = resolvePath(import.meta.dir, '../crates/fujo/tests/fixtures/reference.json');
 writeReference(
 	path,
 	{

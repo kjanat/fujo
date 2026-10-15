@@ -1,16 +1,13 @@
 name: CI
 on:
-  push:
-    branches: [master]
+  push: { branches: [master] }
   pull_request:
 permissions:
   contents: read
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
-defaults:
-  run:
-    shell: bash
+defaults: { run: { shell: bash } }
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: "1"
@@ -21,63 +18,46 @@ jobs:
     timeout-minutes: 20
     strategy:
       fail-fast: false
-      matrix:
-        os: [ubuntu-24.04, macos-latest, windows-latest]
+      matrix: { os: [ubuntu-26.04, macos-latest, windows-latest] }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/setup
+        with: { persist-credentials: false }
+      - uses: $/.github/actions/setup
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - run: cargo test --workspace --locked
       - run: cargo build --workspace --examples --all-features --locked
       - run: cargo doc --workspace --no-deps --all-features --locked
-        env:
-          RUSTDOCFLAGS: -D warnings
+        env: { RUSTDOCFLAGS: "-D warnings" }
   terminal:
     name: Shell completions and terminal rendering
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/setup
+        with: { persist-credentials: false }
+      - uses: $/.github/actions/setup
       - name: Install completion shells
-        run: |
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends -y fish zsh
-          command -v bash
-          command -v pwsh
+        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y fish zsh;
+          command -v bash pwsh
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - run: cargo test --workspace --all-features --locked
-      - run: cargo build -p dreamcli --example terminal --example async_build --locked
+      - run: cargo build -p fujo --example terminal --example async_build --locked
       - run: python scripts/check-terminal.py target/debug/examples/terminal target/debug/examples/async_build
   reference:
     name: Live TypeScript reference
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 20
-    defaults:
-      run:
-        working-directory: dreamcli-rs
+    defaults: { run: { working-directory: fujo } }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          path: dreamcli-rs
-          persist-credentials: false
-      - uses: ./dreamcli-rs/.github/actions/setup
-        with:
-          workspace: dreamcli-rs
+        with: { path: fujo, persist-credentials: false }
+      - uses: $/.github/actions/setup
+        with: { workspace: "${{ github.workspace }}/fujo" }
       - id: reference
         name: Read the recorded reference commit
-        run: |
-          python - <<'PY' >> "${GITHUB_OUTPUT}"
-          import json
-          import pathlib
-          fixture = pathlib.Path("crates/dreamcli/tests/fixtures/reference.json")
-          print("sha=" + json.loads(fixture.read_text())["sourceCommit"])
-          PY
+        run: sha="$(jq -r .sourceCommit crates/fujo/tests/fixtures/reference.json)";
+          printf "sha=%s" "${sha}" >> "${GITHUB_OUTPUT}"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: kjanat/dreamcli
@@ -85,22 +65,20 @@ jobs:
           path: dreamcli
           persist-credentials: false
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-        with:
-          bun-version-file: dreamcli/package.json
+        with: { bun-version-file: dreamcli/package.json }
       - run: bun install --frozen-lockfile --ignore-scripts
         working-directory: dreamcli
       - run: bun scripts/reference-fixtures.ts --check
       - run: bun scripts/lifecycle-fixtures.ts --check
-      - run: cargo test -p dreamcli --features regex,url,chrono --test reference --test lifecycle_reference --locked
+      - run: cargo test -p fujo --features regex,url,chrono --test reference --test lifecycle_reference --locked
   features:
     name: Feature and dependency contracts
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/setup
+        with: { persist-credentials: false }
+      - uses: $/.github/actions/setup
       - run: cargo clippy --workspace --all-targets --no-default-features -- -D warnings
       - run: cargo test --workspace --no-default-features --locked
       - run: python scripts/check-features.py

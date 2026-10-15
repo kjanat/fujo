@@ -1,18 +1,22 @@
-# DreamCLI for Rust
+# Fujo
 
 A schema-first CLI framework with typed inputs, command groups, and one resolution
 pipeline for arguments, stdin, environment variables, configuration, prompts, and
-defaults. This is a native Rust port of the sibling `dreamcli` TypeScript project.
+defaults.
+
+Fujo is a native Rust port of DreamCLI. The
+[DreamCLI TypeScript project](https://github.com/kjanat/dreamcli) remains its
+upstream behavioral reference.
 
 The Cargo workspace separates responsibilities:
 
-| Crate               | Responsibility                                                               |
-| ------------------- | ---------------------------------------------------------------------------- |
-| `dreamcli`          | Public API, command execution, middleware, plugins, help, and native runtime |
-| `dreamcli-core`     | Typed input builders, parsing, resolution, provenance, and schema metadata   |
-| `dreamcli-output`   | `Write` destinations, capture, tables, colors, and activity guards           |
-| `dreamcli-complete` | Bash, Zsh, Fish, and PowerShell completion generation                        |
-| `dreamcli-error`    | Shared structured errors and error categories                                |
+| Crate           | Responsibility                                                               |
+| --------------- | ---------------------------------------------------------------------------- |
+| `fujo`          | Public API, command execution, middleware, plugins, help, and native runtime |
+| `fujo-core`     | Typed input builders, parsing, resolution, provenance, and schema metadata   |
+| `fujo-output`   | `Write` destinations, capture, tables, colors, and activity guards           |
+| `fujo-complete` | Bash, Zsh, Fish, and PowerShell completion generation                        |
+| `fujo-error`    | Shared structured errors and error categories                                |
 
 The core has no process-global reads. Output depends on the shared error crate,
 so it can be used without pulling in the parser and resolver. The public crate
@@ -20,11 +24,16 @@ re-exports the APIs applications normally need.
 
 ## Use from another Rust project
 
-The port is available locally; the crates have not been published.
+The crates have not been published. Clone [Fujo](https://github.com/kjanat/fujo)
+and use its local crates from a sibling application:
+
+```sh
+git clone https://github.com/kjanat/fujo.git
+```
 
 ```toml
 [dependencies]
-dreamcli = { path = "../dreamcli-rs/crates/dreamcli" }
+fujo = { path = "../fujo/crates/fujo" }
 ```
 
 Rust 1.99 or newer is required. The workspace pins its development toolchain in
@@ -37,7 +46,7 @@ animated terminal activities. Specialized value integrations are opt-in:
 
 | Feature             | Default | Controls                                                                  |
 | ------------------- | ------- | ------------------------------------------------------------------------- |
-| `completion`        | Yes     | `dreamcli-complete`, `Cli::completions()`, and the `completion` re-export |
+| `completion`        | Yes     | `fujo-complete`, `Cli::completions()`, and the `completion` re-export     |
 | `terminal-prompts`  | Yes     | `TerminalPrompter` and its `rpassword` dependency                         |
 | `terminal-activity` | Yes     | TTY activity rendering and spinner timer threads                          |
 | `regex`             | No      | String `.pattern()` constraints and the `regex` dependency                |
@@ -48,14 +57,14 @@ For a minimal application, or one that supplies its own prompt implementation:
 
 ```toml
 [dependencies]
-dreamcli = { path = "../dreamcli-rs/crates/dreamcli", default-features = false }
+fujo = { path = "../fujo/crates/fujo", default-features = false }
 ```
 
 Add `features = ["url", "chrono"]` to enable those integrations, with or without
 defaults. Features are additive: another dependency enabling a feature enables
 it for the shared crate. Internal dependencies disable defaults and forward
-features explicitly. `dreamcli-core` has no default features;
-`dreamcli-output` defaults to `terminal-activity` and can disable it independently.
+features explicitly. `fujo-core` has no default features;
+`fujo-output` defaults to `terminal-activity` and can disable it independently.
 
 Minimal builds retain input resolution, provenance, validation, middleware,
 typed and async execution, config, output capture, and JSON/tables. Injected
@@ -67,18 +76,18 @@ Serde and `serde_json` remain mandatory because config, prompt interchange, and
 metadata use them. Definition and JSON Schema exports remain available.
 
 Output can also be adopted independently by a clap application or another parser:
-depend on `dreamcli-output` alone and pass the application's writers and
+depend on `fujo-output` alone and pass the application's writers and
 `OutputOptions` to `Output::with_writers`. That crate depends on neither core
-resolution nor completion generation. Standalone `dreamcli-complete` uses core
+resolution nor completion generation. Standalone `fujo-complete` uses core
 metadata without bringing in the specialized value dependencies.
 
 ## Define a command
 
 ```rust
-use dreamcli::Cli;
-use dreamcli::Command;
-use dreamcli::arg;
-use dreamcli::flag;
+use fujo::Cli;
+use fujo::Command;
+use fujo::arg;
+use fujo::flag;
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
@@ -150,7 +159,7 @@ Typed derives consume the previous state and return its successor. Return a
 struct or tuple containing earlier values when later stages need both:
 
 ```rust
-use dreamcli::{Command, arg, flag};
+use fujo::{Command, arg, flag};
 
 let build = Command::new("build")
     .inputs((arg::path("root"), flag::parse::<u16>("jobs").default(4)))
@@ -202,7 +211,7 @@ Collections take a reusable value parser, which has no environment, config,
 prompt, alias, or default bindings. Attach those settings to the collection:
 
 ```rust
-use dreamcli::{flag, value};
+use fujo::{flag, value};
 
 let tag = value::string().non_empty();
 let tags = flag::array("tags", tag.clone()).env("TAGS").unique();
@@ -229,7 +238,7 @@ CLI → stdin → environment → config → prompt → default
 ```
 
 ```rust
-use dreamcli::{flag, prompt::Prompt};
+use fujo::{flag, prompt::Prompt};
 
 let region = flag::enumeration("region", ["us", "eu"])
     .env("DEPLOY_REGION")
@@ -274,7 +283,7 @@ dropped to stop the chain. In the dynamic API, `.derive()` computes native state
 from resolved inputs and `.state::<T>()` retrieves it by Rust type identity.
 
 ```rust
-use dreamcli::{Command, CliError};
+use fujo::{Command, CliError};
 
 struct Credentials(String);
 
@@ -304,7 +313,7 @@ Use native async closures with `.action_async()`, `.derive_async()`, and
 `.middleware_async()`. Both dynamic and bound handlers support async execution:
 
 ```rust
-use dreamcli::{Cli, Command, flag};
+use fujo::{Cli, Command, flag};
 
 let command = Command::new("demo")
     .inputs(flag::string("name").default("world".into()))
@@ -325,7 +334,7 @@ selects no executor. Futures are local and may borrow native inputs or hold
 non-Send state across suspension; await them directly or use a local task set.
 They cannot be passed to a Send-only spawn API. Callback captures remain
 `Send + Sync + 'static`. Prompts, config, filesystem preparation, and stdio remain
-synchronous. The [async build example](crates/dreamcli/examples/async_build.rs)
+synchronous. The [async build example](crates/fujo/examples/async_build.rs)
 uses Tokio as an application dependency; Tokio is not a library dependency.
 
 Async middleware consumes `AsyncNext` and awaits `next.run(ctx)`. It can wrap
@@ -352,8 +361,8 @@ outputs have no timer. Writer failures propagate to the run result.
 Try the paced terminal showcase in an interactive terminal (about five seconds):
 
 ```sh
-cargo run -p dreamcli --example terminal
-cargo run -p dreamcli --example terminal -- --verbose --fail-at=8
+cargo run -p fujo --example terminal
+cargo run -p fujo --example terminal -- --verbose --fail-at=8
 ```
 
 `--help` and optional `--version` run before input validation. `--json`, `--quiet`,
@@ -394,7 +403,7 @@ Application Support, or Windows AppData; Unix system config is
 `execute()` runs in-process using only injected inputs and captures output:
 
 ```rust
-use dreamcli::{Cli, Command, RunOptions, ResolveOptions, flag};
+use fujo::{Cli, Command, RunOptions, ResolveOptions, flag};
 use std::collections::BTreeMap;
 
 let name = flag::string("name").env("NAME").required();
@@ -418,8 +427,10 @@ assert_eq!(result.stdout, "Ada\n");
 Inject `TestPrompter`, `FileSystem`, or a complete `Runtime` for other test cases.
 `testkit::run_cli(&app, ...)` preserves the complete application configuration.
 `run_command_with_builtins` lets command-only tests release builtin names.
-`Cli::definition()` exports Rust
-schema metadata; `json_schema::input_schema()` describes JSON-representable resolved
+`Cli::definition()` exports Rust schema metadata with `format: "fujo"`
+and `version: 1`. The discriminator was renamed from `dreamcli-rust` as part
+of the Fujo rename; the document version is unchanged.
+`json_schema::input_schema()` describes JSON-representable resolved
 values. Opaque custom Rust values are omitted from JSON exports unless they use a
 codec with a JSON representation.
 
@@ -431,7 +442,7 @@ runs injected checks and records skips. Native runs inject a filesystem.
 Use `PathChecks::file()` for existing input files and
 `PathChecks::file().allow_missing()` for output files that may be new.
 
-The [example CLI guide](crates/dreamcli/examples/README.md) walks through a release
+The [example CLI guide](crates/fujo/examples/README.md) walks through a release
 planner, batch-job planner, nested settings inspector, and live terminal demo, each with its command
 logic kept in one `app()` function. Their actual definitions are exercised by
 integration tests, and compile-fail checks demonstrate the native type guarantees.

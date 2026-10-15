@@ -11,7 +11,7 @@ const sourceCommit = execFileSync('git', ['-C', resolve(import.meta.dir, '../../
 	encoding: 'utf8',
 }).trim();
 const baseline = JSON.parse(
-	readFileSync(resolve(import.meta.dir, '../crates/dreamcli/tests/fixtures/reference.json'), 'utf8'),
+	readFileSync(resolve(import.meta.dir, '../crates/fujo/tests/fixtures/reference.json'), 'utf8'),
 );
 if (sourceCommit !== baseline.sourceCommit) {
 	throw new Error('TypeScript checkout must match reference.json sourceCommit');
@@ -101,5 +101,5 @@ for (const required of [false, true]) {
 		finishes: 0,
 	});
 }
-const path = resolve(import.meta.dir, '../crates/dreamcli/tests/fixtures/lifecycle.json');
+const path = resolve(import.meta.dir, '../crates/fujo/tests/fixtures/lifecycle.json');
 writeReference(path, { sourceCommit, fixtures });

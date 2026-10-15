@@ -51,12 +51,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "dreamcli"
+name = "fujo"
 version = "0.1.0"
 dependencies = [
- "dreamcli-complete",
- "dreamcli-core",
- "dreamcli-output",
+ "fujo-complete",
+ "fujo-core",
+ "fujo-output",
  "rpassword",
  "serde",
  "serde_json",
@@ -66,18 +66,18 @@ dependencies = [
 ]
 
 [[package]]
-name = "dreamcli-complete"
+name = "fujo-complete"
 version = "0.1.0"
 dependencies = [
- "dreamcli-core",
+ "fujo-core",
 ]
 
 [[package]]
-name = "dreamcli-core"
+name = "fujo-core"
 version = "0.1.0"
 dependencies = [
  "chrono",
- "dreamcli-error",
+ "fujo-error",
  "regex",
  "serde",
  "serde_json",
@@ -85,7 +85,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "dreamcli-error"
+name = "fujo-error"
 version = "0.1.0"
 dependencies = [
  "serde",
@@ -93,10 +93,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "dreamcli-output"
+name = "fujo-output"
 version = "0.1.0"
 dependencies = [
- "dreamcli-error",
+ "fujo-error",
  "serde",
  "serde_json",
  "unicode-width",
