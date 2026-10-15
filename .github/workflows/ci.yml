@@ -52,8 +52,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { path: fujo, persist-credentials: false }
-      - uses: $/fujo/.github/actions/setup
-        with: { workspace: fujo }
+      - uses: $/.github/actions/setup
+        with: { workspace: "${{ github.workspace }}/fujo" }
       - id: reference
         name: Read the recorded reference commit
         run: sha="$(jq -r .sourceCommit crates/fujo/tests/fixtures/reference.json)";
