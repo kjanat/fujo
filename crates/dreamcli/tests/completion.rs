@@ -51,6 +51,22 @@ fn run(shell: &str, args: &[&str], script: &str) -> String {
     );
     String::from_utf8(output.stdout).unwrap()
 }
+#[cfg(feature = "shell-tests")]
+fn run_powershell(script: &str) -> String {
+    // `-Command -` enters PowerShell's stdin reader, which can emit terminal
+    // control sequences even with redirected streams and `-NonInteractive`.
+    run(
+        "pwsh",
+        &[
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            script,
+        ],
+        "",
+    )
+}
 #[test]
 #[cfg(feature = "shell-tests")]
 fn bash_script_parses_and_completes_flags_and_values() {
@@ -111,15 +127,7 @@ fn powershell_script_parses_and_completes_nested_enum_values() {
     let probe = format!(
         "{script}\n[System.Management.Automation.CommandCompletion]::CompleteInput('demo db seed --region e',23,$null).CompletionMatches | ForEach-Object {{ $_.CompletionText }}\n"
     );
-    assert_eq!(
-        run(
-            "pwsh",
-            &["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "-"],
-            &probe
-        )
-        .trim(),
-        "eu"
-    );
+    assert_eq!(run_powershell(&probe).trim(), "eu");
 }
 #[test]
 #[cfg(feature = "shell-tests")]
@@ -128,15 +136,7 @@ fn powershell_supports_inline_enum_values() {
     let probe = format!(
         "{script}\n$text='demo db seed --region=e'; [System.Management.Automation.CommandCompletion]::CompleteInput($text,$text.Length,$null).CompletionMatches | ForEach-Object {{ $_.CompletionText }}\n"
     );
-    assert_eq!(
-        run(
-            "pwsh",
-            &["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "-"],
-            &probe
-        )
-        .trim(),
-        "--region=eu"
-    );
+    assert_eq!(run_powershell(&probe).trim(), "--region=eu");
 }
 #[test]
 fn cli_completion_command_uses_the_same_generator() {
