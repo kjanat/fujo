@@ -76,7 +76,7 @@ pub trait Runtime: Send + Sync {
 #[derive(Debug, Default)]
 pub struct NativeRuntime;
 impl FileSystem for NativeRuntime {
-    fn stat(&self, path: &str) -> Result<Option<PathType>> {
+    fn stat(&self, path: &Path) -> Result<Option<PathType>> {
         match std::fs::metadata(path) {
             Ok(meta) if meta.is_file() => Ok(Some(PathType::File)),
             Ok(meta) if meta.is_dir() => Ok(Some(PathType::Directory)),
@@ -88,7 +88,7 @@ impl FileSystem for NativeRuntime {
             Err(e) => Err(e.into()),
         }
     }
-    fn mkdir(&self, path: &str) -> Result<()> {
+    fn mkdir(&self, path: &Path) -> Result<()> {
         std::fs::create_dir_all(path).map_err(Into::into)
     }
 }

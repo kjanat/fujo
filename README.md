@@ -306,6 +306,10 @@ runs injected checks and records skips. Native runs inject a filesystem.
 Use `PathChecks::file()` for existing input files and
 `PathChecks::file().allow_missing()` for output files that may be new.
 
-Runnable examples are in `crates/dreamcli/examples/`. Build and validation commands
+The [example CLI guide](crates/dreamcli/examples/README.md) walks through a release
+planner, batch-job planner, and nested settings inspector, each with its command
+logic kept in one `app()` function. Their actual definitions are exercised by
+integration tests, and compile-fail checks demonstrate the native type guarantees.
+Build and validation commands
 are in [CONTRIBUTING.md](CONTRIBUTING.md). Port compatibility and deliberate Rust
 differences are documented in [PORTING.md](PORTING.md).

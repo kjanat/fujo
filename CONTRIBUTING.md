@@ -22,11 +22,18 @@ cargo run -p dreamcli --example greet -- Ada --loud --times 2
 cargo run -p dreamcli --example greet -- --help
 cargo run -p dreamcli --example greet -- completions bash
 cargo run -p dreamcli --example deploy -- db seed --json
+cargo run -p dreamcli --example release -- plan Cargo.toml --from=1.4.2 --bump=minor --json
+cargo run -p dreamcli --example batch -- plan Cargo.toml README.md -o planned-output --json
+cargo run -p dreamcli --example settings -- config show --json
+cargo test -p dreamcli --test example_clis
 ```
 
 The deploy example uses `DEPLOY_REGION`, `DEPLOY_TOKEN`, and optional JSON config.
 It demonstrates native enums, global flags, typed derived state, and nested
 commands. It simulates deployment and does not contact an external service.
+
+The [example CLI guide](crates/dreamcli/examples/README.md) explains the larger
+examples, their input sources, commands, type checks, and test coverage.
 
 ## Reference fixtures
 

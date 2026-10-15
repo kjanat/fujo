@@ -240,10 +240,10 @@ fn filesystem_skips_are_visible_for_flags_args_and_creating_paths() {
 
 struct NoFilesystemAccess;
 impl FileSystem for NoFilesystemAccess {
-    fn stat(&self, _: &str) -> dreamcli::Result<Option<PathType>> {
+    fn stat(&self, _: &Path) -> dreamcli::Result<Option<PathType>> {
         panic!("disabled check accessed filesystem")
     }
-    fn mkdir(&self, _: &str) -> dreamcli::Result<()> {
+    fn mkdir(&self, _: &Path) -> dreamcli::Result<()> {
         panic!("disabled check created a directory")
     }
 }
@@ -573,4 +573,68 @@ fn default_validation_uses_native_constraints_before_json_encoding() {
         RunOptions::default(),
     );
     assert_eq!(result.error.unwrap().code, "INVALID_SCHEMA");
+}
+
+#[test]
+fn variadic_conversion_preserves_default_presence_and_explicit_precedence() {
+    let files = arg::string("files")
+        .default("fallback.txt".into())
+        .variadic();
+    let command = Command::new("app").arg(files.clone());
+    let result = run(command.clone(), &[], RunOptions::default());
+    assert!(result.success());
+    let values: Vec<String> = result.resolved.unwrap().get(&files).unwrap();
+    assert_eq!(values, ["fallback.txt"]);
+    let result = run(command, &["a.txt", "b.txt"], RunOptions::default());
+    assert_eq!(
+        result.resolved.unwrap().get(&files).unwrap(),
+        ["a.txt", "b.txt"]
+    );
+    let invalid = arg::number("ports").min(1.0).default(0.0).variadic();
+    assert_eq!(
+        run(Command::new("app").arg(invalid), &[], RunOptions::default())
+            .error
+            .unwrap()
+            .code,
+        "INVALID_SCHEMA"
+    );
+}
+
+#[test]
+fn opaque_path_defaults_obey_filesystem_policy_without_json_encoding() {
+    let file = flag::parse::<PathBuf>("file")
+        .path_checks(PathChecks::file())
+        .default(PathBuf::from("missing"));
+    let command = Command::new("app").flag(file);
+    let result = run(command.clone(), &[], RunOptions::default());
+    assert_eq!(result.skipped_checks.len(), 1);
+    let mut options = RunOptions::default();
+    options.resolve.filesystem_policy = CheckPolicy::Required;
+    assert_eq!(
+        run(command, &[], options).error.unwrap().code,
+        "MISSING_CAPABILITY"
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn native_path_defaults_support_non_unicode_filesystem_names() {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(OsString::from_vec(vec![b'f', 0xff]));
+    std::fs::write(&path, "fixture").unwrap();
+    let file = flag::path("file")
+        .path_checks(PathChecks::file())
+        .default(path);
+    let mut options = RunOptions::default();
+    options.resolve.filesystem_policy = CheckPolicy::Required;
+    options.resolve.filesystem = Some(Arc::new(dreamcli::runtime::NativeRuntime));
+    let command = Command::new("app").flag(file.clone());
+    assert!(run(command.clone(), &[], options.clone()).success());
+    std::fs::remove_file(dir.path().join(OsString::from_vec(vec![b'f', 0xff]))).unwrap();
+    assert_eq!(
+        run(command, &[], options).error.unwrap().code,
+        "CONSTRAINT_VIOLATED"
+    );
 }

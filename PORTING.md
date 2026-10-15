@@ -73,6 +73,11 @@ Filesystem checks require an injected capability during process-free execution.
 The default policy records skipped checks; `Required` fails and `Disabled`
 explicitly opts out. Native execution supplies the filesystem automatically.
 
+Filesystem capabilities use `&Path`, preserving native path names without JSON
+or UTF-8 conversion. Checks apply to opaque and non-Unicode native defaults too.
+A scalar positional default becomes a one-element vector when converted with
+`.variadic()`, preserving the required/defaulted accessor guarantee.
+
 ## Schema documents and formats
 
 The Rust definition document uses `format: "dreamcli-rust"` and `version: 1`.

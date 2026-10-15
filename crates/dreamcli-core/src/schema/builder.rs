@@ -293,7 +293,30 @@ impl<T, P> Input<T, P, ArgMarker> {
         T: Clone + Send + Sync + 'static,
     {
         let original = self.schema;
-        let mut schema = collection_schema::<T>(&original.name, Kind::Array, original.clone());
+        let default = original.native_default.as_ref().map(|value| {
+            vec![
+                value
+                    .downcast_ref::<T>()
+                    .expect("typed positional default")
+                    .clone(),
+            ]
+        });
+        let mut element = original.clone();
+        element.native_default = None;
+        element.declaration.default_value = None;
+        element.declaration.default_description = None;
+        element.declaration.required = false;
+        element.declaration.env_vars.clear();
+        element.declaration.config_path = None;
+        element.declaration.stdin = None;
+        element.declaration.prompt = None;
+        let mut schema = collection_schema::<T>(&original.name, Kind::Array, element);
+        if let Some(default) = default {
+            let mut native = NativeValue::new(default);
+            native.json = schema.encoder.as_ref().and_then(|encode| encode(&native));
+            schema.declaration.default_value = native.json.clone();
+            schema.native_default = Some(native);
+        }
         schema.declaration.surface = Surface::Arg;
         let original = original.declaration;
         schema.declaration.required = original.required;
@@ -307,6 +330,10 @@ impl<T, P> Input<T, P, ArgMarker> {
         schema.declaration.stdin_split = original.stdin_split;
         schema.declaration.variadic = true;
         schema.declaration.sensitive = original.sensitive;
+        schema.declaration.hidden = original.hidden;
+        schema.declaration.deprecated = original.deprecated;
+        schema.declaration.value_hint = original.value_hint;
+        schema.declaration.default_description = original.default_description;
         Input::from_schema(schema)
     }
 }

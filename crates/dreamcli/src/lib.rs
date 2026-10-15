@@ -27,6 +27,42 @@
 //! use dreamcli::{Command, arg};
 //! let command = Command::new("demo").flag(arg::string("name"));
 //! ```
+//!
+//! The richer `release`, `batch`, and `settings` examples retain native types in
+//! handlers. Incorrect assumptions are rejected by the compiler:
+//!
+//! ```compile_fail
+//! use dreamcli::{Command, flag};
+//! use std::num::NonZeroU16;
+//! let workers = flag::parse::<NonZeroU16>("workers").required();
+//! let command = Command::new("batch").flag(workers.clone()).action(move |ctx| {
+//!     let workers: String = ctx.get(&workers)?;
+//!     Ok(())
+//! });
+//! ```
+//!
+//! ```compile_fail
+//! use dreamcli::{Command, arg};
+//! let artifact = arg::path("artifact");
+//! let command = Command::new("release").arg(artifact.clone()).action(move |ctx| {
+//!     let artifact: String = ctx.get(&artifact)?;
+//!     Ok(())
+//! });
+//! ```
+//!
+//! ```compile_fail
+//! use dreamcli::{Command, flag, value};
+//! let ports = flag::array("ports", value::parse::<u16>());
+//! let command = Command::new("settings").flag(ports.clone()).action(move |ctx| {
+//!     let ports: Vec<String> = ctx.get(&ports)?;
+//!     Ok(())
+//! });
+//! ```
+//!
+//! ```compile_fail
+//! use dreamcli::flag;
+//! let port = flag::parse::<u16>("port").default("8080");
+//! ```
 pub mod cli;
 pub mod command;
 pub use dreamcli_complete as completion;
