@@ -2,18 +2,43 @@
 
 Each example keeps input declarations, validation, orchestration, and output
 selection together in one `app() -> Cli` function. Supporting domain types stay
-in the same file. `main()` only calls `app().run()`. The integration tests import
+in the same file. `main()` calls `app().run()` or awaits `app().run_async()` using
+the application's executor. The integration tests import
 these exact definitions and execute them with injected inputs.
 
-| Example                    | CLI logic                                 | What it demonstrates                                                                                                                                                                        |
-| -------------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [release.rs](release.rs)   | `app()` near the top; version types below | Native `Version` and `Bump`, checked version arithmetic, config/env/CLI precedence, conditional secret prompts, typed derived plans, middleware, JSON encoding without Serde on input types |
-| [batch.rs](batch.rs)       | `app()`; job/result types below           | Variadic checked paths, nonzero worker counts, typed priority maps, validated/deduplicated arrays, durations, bytes, global flags, collision policy, provenance, tables, and progress       |
-| [settings.rs](settings.rs) | `app()` with a local command factory      | Nested commands, inherited profile, native URL/port values, production HTTPS policy, explicit stdin credentials, redaction, effective settings, provenance, and JSON Schema                 |
-| [terminal.rs](terminal.rs) | `app()` with a single action              | Automatic spinner animation, label changes, live progress bars, status messages during progress, verbose diagnostics, failure cleanup, tables, and JSON/quiet output                        |
+| Example                          | CLI logic                                 | What it demonstrates                                                                                                                                                                        |
+| -------------------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [release.rs](release.rs)         | `app()` near the top; version types below | Native `Version` and `Bump`, checked version arithmetic, config/env/CLI precedence, conditional secret prompts, typed derived plans, middleware, JSON encoding without Serde on input types |
+| [batch.rs](batch.rs)             | `app()`; job/result types below           | Variadic checked paths, nonzero worker counts, typed priority maps, validated/deduplicated arrays, durations, bytes, global flags, collision policy, provenance, tables, and progress       |
+| [settings.rs](settings.rs)       | `app()` with a local command factory      | Nested commands, inherited profile, native URL/port values, production HTTPS policy, explicit stdin credentials, redaction, effective settings, provenance, and JSON Schema                 |
+| [terminal.rs](terminal.rs)       | `app()` with a single action              | Automatic spinner animation, label changes, live progress bars, status messages during progress, verbose diagnostics, failure cleanup, tables, and JSON/quiet output                        |
+| [async_build.rs](async_build.rs) | `app()` with bound inputs and state       | Command-bound native values, explicit state construction, shared globals, async derives/actions/middleware, application-owned Tokio, live spinner/progress, JSON and quiet output           |
 
 These examples build release and batch plans, inspect settings, and simulate work. Running them
 does not upload artifacts, copy/move/link files, or write configuration.
+
+The release and settings examples require the opt-in `url` integration. Cargo
+records required features for each example. The commands below retain the
+default completion and terminal features.
+
+## Typed async build
+
+```sh
+cargo run -p dreamcli --example async_build
+cargo run -p dreamcli --example async_build -- --profile=prod --jobs=20 --delay=150ms
+cargo run -p dreamcli --example async_build -- --delay=0ms --jobs=2 --json
+```
+
+The demo binds a shared profile, a native nonzero job count, and a native duration
+to its callbacks. An async derive constructs `Build`; the action receives that
+state directly. `tokio::time::sleep` yields while the output spinner ticks and
+the action advances its progress bar. Tokio is a dev dependency used by this
+example; DreamCLI itself selects no executor. `greet.rs` also uses bound inputs.
+
+The release, batch, settings, and terminal examples retain the dynamic handle
+API. Their compile-time checks establish value and presence types, while handle
+registration and type-map state availability are checked at runtime. Bound
+callbacks additionally establish their declared input bundle and state shape.
 
 ## Live terminal showcase
 
@@ -55,7 +80,7 @@ Use an existing artifact. For a quick local demonstration, the workspace
 `Cargo.toml` can serve as the checked input file:
 
 ```sh
-cargo run -p dreamcli --example release -- plan Cargo.toml --from=1.4.2 --bump=minor --json
+cargo run -p dreamcli --features url --example release -- plan Cargo.toml --from=1.4.2 --bump=minor --json
 ```
 
 The result contains `current: "1.4.2"` and `next: "1.5.0"`. `Version` and `Bump`
@@ -108,10 +133,10 @@ The `batch` configuration supports `mode` and `workers`.
 ## Nested settings inspector
 
 ```sh
-cargo run -p dreamcli --example settings -- config show --profile prod --port 9443 --json
-cargo run -p dreamcli --example settings -- config validate --endpoint http://localhost
-cargo run -p dreamcli --example settings -- config schema
-printf '%s\n' 'example-token' | cargo run -p dreamcli --example settings -- config show --token=- --json
+cargo run -p dreamcli --features url --example settings -- config show --profile prod --port 9443 --json
+cargo run -p dreamcli --features url --example settings -- config validate --endpoint http://localhost
+cargo run -p dreamcli --features url --example settings -- config schema
+printf '%s\n' 'example-token' | cargo run -p dreamcli --features url --example settings -- config show --token=- --json
 ```
 
 The first command reports effective values and their sources. The second uses
@@ -140,9 +165,10 @@ the project/user/system discovery described in the main README.
 ## Type and behavior checks
 
 ```sh
-cargo test -p dreamcli --test example_clis
+cargo test -p dreamcli --features url --test example_clis
+cargo test -p dreamcli --test typed --test async_execution --test lifecycle_reference
 cargo test -p dreamcli --doc
-cargo check -p dreamcli --examples
+cargo check -p dreamcli --features url --examples
 ```
 
 The handlers contain explicit native type annotations: `Version`, `Bump`,
@@ -161,11 +187,17 @@ They verify that the original input files are unchanged and the planned output
 directory is not created. Cross-input policies and filesystem facts are checked
 at runtime; the compiler enforces input value types and presence accessors.
 
+Bound-input compile-fail checks also reject unrelated handle reads, undeclared
+bundle elements, wrong native value types, missing state, and positional inputs
+in root globals. Async continuations cannot be invoked twice. Runtime tests
+exercise borrowed non-Clone inputs, local state across awaits, globals at nested
+command positions, failed derives, middleware wrapping, and dropped invocations.
+
 Every example supports `--help`, `--help --json`, and
 `completions bash|zsh|fish|powershell`. For example:
 
 ```sh
 cargo run -p dreamcli --example batch -- plan --help
-cargo run -p dreamcli --example release -- plan --help --json
-cargo run -p dreamcli --example settings -- completions fish
+cargo run -p dreamcli --features url --example release -- plan --help --json
+cargo run -p dreamcli --features url --example settings -- completions fish
 ```

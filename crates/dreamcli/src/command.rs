@@ -68,27 +68,39 @@ impl Context {
             })
     }
 }
-pub(crate) type Action = Arc<dyn Fn(&mut Context) -> Result<()> + Send + Sync>;
+pub(crate) type SyncAction = Arc<dyn Fn(&mut Context) -> Result<()> + Send + Sync>;
 pub(crate) type Middleware =
     Arc<dyn for<'a> Fn(&mut Context, Next<'a>) -> Result<()> + Send + Sync>;
 
+pub(crate) use crate::execution::Action;
+pub use crate::execution::AsyncNext;
+pub(crate) use crate::execution::Step;
+
 /// Calling `run` executes the remainder once; dropping it short-circuits the action.
 pub struct Next<'a> {
-    pub(crate) steps: &'a [Middleware],
+    pub(crate) steps: &'a [Step],
     pub(crate) action: Option<&'a Action>,
 }
 impl Next<'_> {
     pub fn run(self, ctx: &mut Context) -> Result<()> {
         if let Some((first, rest)) = self.steps.split_first() {
-            first(
-                ctx,
-                Next {
-                    steps: rest,
-                    action: self.action,
-                },
-            )
+            let next = Next {
+                steps: rest,
+                action: self.action,
+            };
+            match first {
+                Step::Middleware(middleware) => middleware(ctx, next),
+                Step::Derive(derive) => {
+                    derive(ctx)?;
+                    next.run(ctx)
+                }
+                Step::Async(_) => Err(crate::execution::async_required()),
+            }
         } else if let Some(action) = self.action {
-            action(ctx)
+            match action {
+                Action::Sync(action) => action(ctx),
+                Action::Async(_) => Err(crate::execution::async_required()),
+            }
         } else {
             Err(CliError::new("NO_ACTION", "Command has no action"))
         }
@@ -99,7 +111,7 @@ impl Next<'_> {
 pub struct Command {
     pub(crate) schema: CommandSchema,
     pub(crate) children: Vec<Command>,
-    pub(crate) steps: Vec<Middleware>,
+    pub(crate) steps: Vec<Step>,
     pub(crate) action: Option<Action>,
     pub(crate) interactive: Option<crate::resolve::Interactive>,
 }
@@ -177,7 +189,15 @@ impl Command {
         mut self,
         action: impl Fn(&mut Context) -> Result<()> + Send + Sync + 'static,
     ) -> Self {
-        self.action = Some(Arc::new(action));
+        self.action = Some(Action::Sync(Arc::new(action)));
+        self
+    }
+    /// Register an async closure without selecting an executor.
+    pub fn action_async(
+        mut self,
+        action: impl for<'a> AsyncFn(&'a mut Context) -> Result<()> + Send + Sync + 'static,
+    ) -> Self {
+        self.action = Some(Action::Async(Arc::new(action)));
         self
     }
     pub fn interactive(
@@ -197,17 +217,39 @@ impl Command {
         mut self,
         middleware: impl for<'a> Fn(&mut Context, Next<'a>) -> Result<()> + Send + Sync + 'static,
     ) -> Self {
-        self.steps.push(Arc::new(middleware));
+        self.steps.push(Step::Middleware(Arc::new(middleware)));
+        self
+    }
+    /// Async middleware owns its continuation; await it at most once.
+    pub fn middleware_async(
+        mut self,
+        middleware: impl for<'a> AsyncFn(&'a mut Context, AsyncNext<'a>) -> Result<()>
+        + Send
+        + Sync
+        + 'static,
+    ) -> Self {
+        self.steps.push(Step::Async(Arc::new(middleware)));
         self
     }
     pub fn derive<T: Send + Sync + 'static>(
-        self,
+        mut self,
         derive: impl Fn(&Context) -> Result<T> + Send + Sync + 'static,
     ) -> Self {
-        self.middleware(move |ctx, next| {
+        self.steps.push(Step::Derive(Arc::new(move |ctx| {
             let value = derive(ctx)?;
             ctx.insert(value);
-            next.run(ctx)
+            Ok(())
+        })));
+        self
+    }
+    pub fn derive_async<T: Send + Sync + 'static>(
+        self,
+        derive: impl for<'a> AsyncFn(&'a Context) -> Result<T> + Send + Sync + 'static,
+    ) -> Self {
+        self.middleware_async(async move |ctx, next| {
+            let value = derive(&*ctx).await?;
+            ctx.insert(value);
+            next.run(ctx).await
         })
     }
     pub fn validate(&self) -> Result<()> {

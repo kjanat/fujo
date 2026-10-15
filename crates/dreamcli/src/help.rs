@@ -1,4 +1,5 @@
 use crate::command::CommandSchema;
+#[cfg(feature = "completion")]
 use crate::completion::Shell;
 use crate::schema::InputSchema;
 use dreamcli_core::command::ProgramSchema;
@@ -337,6 +338,7 @@ fn wrap(text: &str, width: usize, indent: usize) -> String {
     }
     result
 }
+#[cfg(feature = "completion")]
 pub fn shell_from_path(path: &str) -> Option<Shell> {
     std::path::Path::new(path)
         .file_name()?

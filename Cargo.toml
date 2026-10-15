@@ -12,9 +12,9 @@ license      = "MIT"
 [workspace.dependencies]
 chrono            = { version = "0.4", default-features = false, features = ["serde", "std"] }
 dreamcli-complete = { path = "crates/dreamcli-complete", version = "0.1.0" }
-dreamcli-core     = { path = "crates/dreamcli-core", version = "0.1.0" }
+dreamcli-core     = { path = "crates/dreamcli-core", version = "0.1.0", default-features = false }
 dreamcli-error    = { path = "crates/dreamcli-error", version = "0.1.0" }
-dreamcli-output   = { path = "crates/dreamcli-output", version = "0.1.0" }
+dreamcli-output   = { path = "crates/dreamcli-output", version = "0.1.0", default-features = false }
 regex             = "1"
 serde             = { version = "1", features = ["derive"] }
 serde_json        = "1"

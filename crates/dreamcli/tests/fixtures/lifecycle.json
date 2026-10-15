@@ -1,0 +1,168 @@
+{
+	"sourceCommit": "f87c1672e10b27c066524a0715bfea0f714dd5bc",
+	"fixtures": [
+		{
+			"name": "success",
+			"trace": [
+				"outer:before",
+				"inner:before",
+				"derive",
+				"action",
+				"inner:after",
+				"outer:after"
+			],
+			"exitCode": 0,
+			"code": null,
+			"stdout": "7\n",
+			"starts": 0,
+			"finishes": 0
+		},
+		{
+			"name": "short-circuit",
+			"trace": [
+				"outer:before",
+				"inner:before",
+				"inner:after",
+				"outer:after"
+			],
+			"exitCode": 0,
+			"code": null,
+			"stdout": "",
+			"starts": 0,
+			"finishes": 0
+		},
+		{
+			"name": "derive-failure",
+			"trace": [
+				"outer:before",
+				"inner:before",
+				"derive",
+				"inner:after",
+				"caught",
+				"outer:after"
+			],
+			"exitCode": 2,
+			"code": "DENIED",
+			"stdout": "",
+			"starts": 0,
+			"finishes": 0
+		},
+		{
+			"name": "action-failure",
+			"trace": [
+				"outer:before",
+				"inner:before",
+				"derive",
+				"action",
+				"inner:after",
+				"caught",
+				"outer:after"
+			],
+			"exitCode": 2,
+			"code": "FAILED",
+			"stdout": "",
+			"starts": 0,
+			"finishes": 0
+		},
+		{
+			"name": "transform-error",
+			"trace": [
+				"outer:before",
+				"inner:before",
+				"derive",
+				"action",
+				"inner:after",
+				"caught",
+				"outer:after"
+			],
+			"exitCode": 2,
+			"code": "WRAPPED",
+			"stdout": "",
+			"starts": 0,
+			"finishes": 0
+		},
+		{
+			"name": "exit-code",
+			"trace": [
+				"outer:before",
+				"inner:before",
+				"derive",
+				"action",
+				"inner:after",
+				"outer:after"
+			],
+			"exitCode": 3,
+			"code": null,
+			"stdout": "7\n",
+			"starts": 0,
+			"finishes": 0
+		},
+		{
+			"name": "activities",
+			"trace": [
+				"outer:before",
+				"inner:before",
+				"derive",
+				"action",
+				"inner:after",
+				"outer:after"
+			],
+			"exitCode": 0,
+			"code": null,
+			"stdout": "7\n",
+			"starts": 2,
+			"finishes": 2
+		},
+		{
+			"name": "activity-failure",
+			"trace": [
+				"outer:before",
+				"inner:before",
+				"derive",
+				"action",
+				"inner:after",
+				"caught",
+				"outer:after"
+			],
+			"exitCode": 2,
+			"code": "FAILED",
+			"stdout": "",
+			"starts": 1,
+			"finishes": 0
+		},
+		{
+			"name": "json",
+			"trace": [
+				"outer:before",
+				"inner:before",
+				"derive",
+				"action",
+				"inner:after",
+				"outer:after"
+			],
+			"exitCode": 0,
+			"code": null,
+			"stdout": "{\"value\":7}\n",
+			"starts": 0,
+			"finishes": 0
+		},
+		{
+			"name": "prompt-skip-default",
+			"trace": [],
+			"exitCode": 0,
+			"code": null,
+			"stdout": "fallback\n",
+			"starts": 0,
+			"finishes": 0
+		},
+		{
+			"name": "prompt-skip-required",
+			"trace": [],
+			"exitCode": 2,
+			"code": "REQUIRED_FLAG",
+			"stdout": "",
+			"starts": 0,
+			"finishes": 0
+		}
+	]
+}

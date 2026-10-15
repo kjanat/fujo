@@ -470,6 +470,7 @@ fn help_ordering_supports_declaration_order_and_custom_comparators() {
 }
 
 #[test]
+#[cfg(feature = "completion")]
 fn completion_headers_record_the_program_version_in_all_shells() {
     use dreamcli::completion::Shell;
     use dreamcli::completion::generate;
@@ -484,6 +485,7 @@ fn completion_headers_record_the_program_version_in_all_shells() {
 }
 
 #[test]
+#[cfg(feature = "completion")]
 fn completion_spelling_respects_disabled_case_parity() {
     use dreamcli::completion::Shell;
     use dreamcli::completion::generate_with_options;

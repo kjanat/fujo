@@ -84,6 +84,7 @@ impl ValueParser<String> {
     pub fn max_length(self, max: usize) -> Self {
         Self::from_input(self.flag("value").max_length(max))
     }
+    #[cfg(feature = "regex")]
     pub fn pattern(self, pattern: impl Into<String>) -> Self {
         Self::from_input(self.flag("value").pattern(pattern))
     }
@@ -99,6 +100,7 @@ impl ValueParser<f64> {
         Self::from_input(self.flag("value").integer())
     }
 }
+#[cfg(feature = "url")]
 impl ValueParser<url::Url> {
     pub fn protocols(self, protocols: impl IntoIterator<Item = impl Into<String>>) -> Self {
         Self::from_input(self.flag("value").protocols(protocols))
@@ -116,12 +118,14 @@ pub fn boolean() -> ValueParser<bool> {
 pub fn enumeration(choices: impl IntoIterator<Item = impl Into<String>>) -> ValueParser<String> {
     ValueParser::from_input(flag::enumeration("value", choices))
 }
+#[cfg(feature = "url")]
 pub fn url() -> ValueParser<url::Url> {
     ValueParser::from_input(flag::url("value"))
 }
 pub fn path() -> ValueParser<std::path::PathBuf> {
     ValueParser::from_input(flag::path("value"))
 }
+#[cfg(feature = "chrono")]
 pub fn date() -> ValueParser<chrono::DateTime<chrono::Utc>> {
     ValueParser::from_input(flag::date("value"))
 }

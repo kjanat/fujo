@@ -5,13 +5,17 @@ use crate::Output;
 use crate::Result;
 use crate::command::CommandSchema;
 use crate::command::Meta;
-use crate::command::Middleware;
 use crate::command::Next;
+#[cfg(feature = "completion")]
 use crate::completion::Shell;
+#[cfg(feature = "completion")]
 use crate::completion::{self};
 use crate::config::ConfigSettings;
 use crate::config::Manifest;
 use crate::config::{self};
+use crate::execution::Action;
+use crate::execution::AsyncNext;
+use crate::execution::Step;
 use crate::help;
 use crate::output::Verbosity;
 use crate::parse::Occurrence;
@@ -124,10 +128,17 @@ impl Cli {
         self.schema.flags.push(flag.into_schema());
         self
     }
+    /// Register reusable CLI-wide flags. Include the same bundle in a command's
+    /// `.inputs((globals, locals))` to bind them to its typed handler.
+    pub fn inputs<I: crate::typed::FlagSet>(mut self, inputs: I) -> Self {
+        inputs.visit(&mut |input| self.schema.flags.push(input));
+        self
+    }
     pub fn builtins(mut self, builtins: Builtins) -> Self {
         self.schema.builtins = builtins;
         self
     }
+    #[cfg(feature = "completion")]
     pub fn completions(mut self) -> Self {
         self.schema.completions = true;
         self
@@ -221,6 +232,55 @@ impl Cli {
             None,
         )
     }
+    /// Execute async actions and middleware with injected capabilities.
+    /// The caller chooses an executor; futures may hold local, non-Send values.
+    pub async fn execute_async(
+        &self,
+        argv: impl IntoIterator<Item = impl Into<String>>,
+        options: RunOptions,
+    ) -> RunResult {
+        self.execute_inner_async(
+            argv.into_iter().map(Into::into).collect(),
+            options,
+            None,
+            None,
+        )
+        .await
+    }
+    /// Await native execution. Stdio, prompts, and filesystem preparation remain synchronous.
+    pub async fn run_async(&self) -> ExitCode {
+        self.run_os_with_async(
+            std::env::args_os().skip(1),
+            RunOptions::default(),
+            &NativeRuntime,
+        )
+        .await
+        .exit_code()
+    }
+    pub async fn run_with_async(
+        &self,
+        argv: impl IntoIterator<Item = impl Into<String>>,
+        options: RunOptions,
+        runtime: &dyn Runtime,
+    ) -> RunResult {
+        self.execute_inner_async(
+            argv.into_iter().map(Into::into).collect(),
+            options,
+            Some(runtime),
+            None,
+        )
+        .await
+    }
+    pub async fn run_os_with_async(
+        &self,
+        argv: impl IntoIterator<Item = impl Into<std::ffi::OsString>>,
+        options: RunOptions,
+        runtime: &dyn Runtime,
+    ) -> RunResult {
+        let (argv, error) = decode_os_args(argv);
+        self.execute_inner_async(argv, options, Some(runtime), error)
+            .await
+    }
     /// Run with native stdio, named environment reads, and filesystem capabilities.
     /// Returning `ExitCode` lets an application's `main` perform normal Rust cleanup.
     pub fn run(&self) -> ExitCode {
@@ -251,27 +311,82 @@ impl Cli {
         options: RunOptions,
         runtime: &dyn Runtime,
     ) -> RunResult {
-        let mut decoded = vec![];
-        let mut error = None;
-        for argument in argv {
-            match argument.into().into_string() {
-                Ok(argument) => decoded.push(argument),
-                Err(_) => {
-                    error.get_or_insert_with(|| {
-                        CliError::parse("INVALID_UTF8", "CLI arguments must be valid UTF-8")
-                    });
-                }
-            }
-        }
+        let (decoded, error) = decode_os_args(argv);
         self.execute_inner(decoded, options, Some(runtime), error)
     }
     fn execute_inner(
+        &self,
+        argv: Vec<String>,
+        options: RunOptions,
+        runtime: Option<&dyn Runtime>,
+        initial_error: Option<CliError>,
+    ) -> RunResult {
+        let Prepared {
+            output,
+            resolved,
+            pending,
+        } = self.prepare(argv, options, runtime, initial_error);
+        let run = pending.and_then(|pending| {
+            if let Some(mut pending) = pending {
+                if crate::execution::requires_async(&pending.steps, pending.action) {
+                    return Err(crate::execution::async_required());
+                }
+                for plugin in &self.plugins {
+                    plugin.before_execute(&mut pending.context)?;
+                }
+                Next {
+                    steps: &pending.steps,
+                    action: pending.action,
+                }
+                .run(&mut pending.context)?;
+                for plugin in &self.plugins {
+                    plugin.after_execute(&pending.context)?;
+                }
+            }
+            Ok(())
+        });
+        self.finish_run(output, resolved, run)
+    }
+    async fn execute_inner_async(
+        &self,
+        argv: Vec<String>,
+        options: RunOptions,
+        runtime: Option<&dyn Runtime>,
+        initial_error: Option<CliError>,
+    ) -> RunResult {
+        let Prepared {
+            output,
+            resolved,
+            pending,
+        } = self.prepare(argv, options, runtime, initial_error);
+        let run = async {
+            if let Some(mut pending) = pending? {
+                crate::execution::validate_async(&pending.steps, pending.action)?;
+                for plugin in &self.plugins {
+                    plugin.before_execute(&mut pending.context)?;
+                }
+                AsyncNext {
+                    steps: &pending.steps,
+                    action: pending.action,
+                }
+                .run(&mut pending.context)
+                .await?;
+                for plugin in &self.plugins {
+                    plugin.after_execute(&pending.context)?;
+                }
+            }
+            Ok(())
+        }
+        .await;
+        self.finish_run(output, resolved, run)
+    }
+    fn prepare(
         &self,
         mut argv: Vec<String>,
         mut options: RunOptions,
         runtime: Option<&dyn Runtime>,
         initial_error: Option<CliError>,
-    ) -> RunResult {
+    ) -> Prepared<'_> {
         let mut failure = initial_error;
         options.help.case_parity = options.parse.case_parity;
         for plugin in &self.plugins {
@@ -298,7 +413,7 @@ impl Cli {
                     .unwrap_or_else(|| Output::capture(options.output.clone()))
             });
         let mut resolved = None;
-        let run = (|| -> Result<()> {
+        let run = (|| -> Result<Option<Pending<'_>>> {
             if let Some(error) = failure {
                 return Err(error);
             }
@@ -311,7 +426,7 @@ impl Cli {
                     "{}\n",
                     self.schema.version.as_deref().expect("version")
                 ));
-                return Ok(());
+                return Ok(None);
             }
             if self.schema.builtins.help && argv.first().is_some_and(|s| s == "help") {
                 argv.remove(0);
@@ -320,6 +435,7 @@ impl Cli {
             let help = self.schema.builtins.help
                 && (parse::includes_before_separator(&argv, "--help")
                     || parse::includes_before_separator(&argv, "-h"));
+            #[cfg(feature = "completion")]
             if self.schema.completions {
                 if let Some(index) = argv
                     .iter()
@@ -342,12 +458,12 @@ impl Cli {
                         shell,
                         options.parse,
                     ));
-                    return Ok(());
+                    return Ok(None);
                 }
                 if argv.first().is_some_and(|s| s == "completions") {
                     if help {
                         output.raw_stdout("Usage: completions <bash|zsh|fish|powershell>\n");
-                        return Ok(());
+                        return Ok(None);
                     }
                     let shell = argv
                         .get(1)
@@ -366,7 +482,7 @@ impl Cli {
                         shell,
                         options.parse,
                     ));
-                    return Ok(());
+                    return Ok(None);
                 }
             }
             if help {
@@ -397,7 +513,7 @@ impl Cli {
                 } else {
                     output.raw_stdout(&help::root_help(&self.schema, &options.help));
                 }
-                return Ok(());
+                return Ok(None);
             };
             if help
                 || (invocation.command.action.is_none()
@@ -410,7 +526,7 @@ impl Cli {
                     } else {
                         output.json(&crate::json_schema::command_definition(&invocation.schema))?;
                     }
-                    return Ok(());
+                    return Ok(None);
                 }
                 output.raw_stdout(&help::command_help(
                     &invocation.schema,
@@ -426,7 +542,7 @@ impl Cli {
                     &options.help,
                     Some(&self.schema),
                 ));
-                return Ok(());
+                return Ok(None);
             }
             let parsed = parse::parse(&invocation.schema, &invocation.argv, options.parse)?;
             if let Some(runtime) = runtime {
@@ -447,6 +563,7 @@ impl Cli {
                 if options.resolve.filesystem.is_none() {
                     options.resolve.filesystem = Some(runtime.filesystem());
                 }
+                #[cfg(feature = "terminal-prompts")]
                 if options.resolve.prompter.is_none() && runtime.stdin_is_tty() {
                     options.resolve.prompter = Some(Arc::new(crate::prompt::TerminalPrompter));
                 }
@@ -484,7 +601,7 @@ impl Cli {
                 output.warn(warning);
             }
             resolved = Some(inputs.clone());
-            let mut context = Context::new(
+            let context = Context::new(
                 inputs,
                 output.clone(),
                 Meta {
@@ -497,19 +614,24 @@ impl Cli {
                     },
                 },
             );
-            for plugin in &self.plugins {
-                plugin.before_execute(&mut context)?;
-            }
-            Next {
-                steps: &invocation.steps,
+            Ok(Some(Pending {
+                context,
+                steps: invocation.steps,
                 action: invocation.command.action.as_ref(),
-            }
-            .run(&mut context)?;
-            for plugin in &self.plugins {
-                plugin.after_execute(&context)?;
-            }
-            Ok(())
+            }))
         })();
+        Prepared {
+            output,
+            resolved,
+            pending: run,
+        }
+    }
+    fn finish_run(
+        &self,
+        output: Output,
+        resolved: Option<crate::Resolved>,
+        run: Result<()>,
+    ) -> RunResult {
         let error = run.err().or_else(|| output.finish().err());
         if let Some(error) = &error {
             for plugin in &self.plugins {
@@ -617,7 +739,7 @@ struct Invocation<'a> {
     schema: CommandSchema,
     argv: Vec<String>,
     path: String,
-    steps: Vec<Middleware>,
+    steps: Vec<Step>,
 }
 fn with_flags(mut schema: CommandSchema, inherited: &[InputSchema]) -> CommandSchema {
     let mut flags: Vec<_> = inherited
@@ -750,4 +872,32 @@ fn needs_stdin(schema: &CommandSchema, parsed: &parse::Parsed) -> bool {
         occurrences.is_some_and(|o| o.iter().any(|o| matches!(o, Occurrence::Stdin)))
             || (binding.reads_missing() && occurrences.is_none_or(Vec::is_empty))
     })
+}
+
+struct Pending<'a> {
+    context: Context,
+    steps: Vec<Step>,
+    action: Option<&'a Action>,
+}
+struct Prepared<'a> {
+    output: Output,
+    resolved: Option<crate::Resolved>,
+    pending: Result<Option<Pending<'a>>>,
+}
+fn decode_os_args(
+    argv: impl IntoIterator<Item = impl Into<std::ffi::OsString>>,
+) -> (Vec<String>, Option<CliError>) {
+    let mut decoded = vec![];
+    let mut error = None;
+    for argument in argv {
+        match argument.into().into_string() {
+            Ok(argument) => decoded.push(argument),
+            Err(_) => {
+                error.get_or_insert_with(|| {
+                    CliError::parse("INVALID_UTF8", "CLI arguments must be valid UTF-8")
+                });
+            }
+        }
+    }
+    (decoded, error)
 }

@@ -1,7 +1,11 @@
 use super::*;
+#[cfg(feature = "chrono")]
 use chrono::DateTime;
+#[cfg(feature = "chrono")]
 use chrono::NaiveDate;
+#[cfg(feature = "chrono")]
 use chrono::NaiveDateTime;
+#[cfg(feature = "chrono")]
 use chrono::Utc;
 use serde::de::DeserializeOwned;
 use std::collections::BTreeMap;
@@ -110,13 +114,10 @@ fn collection_encoder<T: Clone + Send + Sync + 'static>(kind: Kind, encode: Enco
     })
 }
 
+#[cfg(feature = "chrono")]
 pub(super) fn parse_date(s: &str) -> Result<DateTime<Utc>> {
-    let pattern = Regex::new(
-        r"^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})?)?$",
-    )
-    .expect("constant regex");
     let fail = || CliError::validation("CONSTRAINT_VIOLATED", "Expected a valid ISO-8601 date");
-    if !pattern.is_match(s) {
+    if !iso_date_shape(s) {
         return Err(fail());
     }
     if s.len() == 10 {
@@ -163,35 +164,38 @@ pub(super) fn parse_duration(raw: &Value) -> Result<f64> {
         };
     }
     let text = raw.as_str().ok_or_else(fail)?;
-    let bare = Regex::new(r"^\d+(?:\.\d+)?$").expect("constant regex");
-    if bare.is_match(text) {
-        let n = text.parse::<f64>().map_err(|_| fail())?;
+    let (number, suffix) = decimal_prefix(text).ok_or_else(fail)?;
+    if suffix.is_empty() {
+        let n = number.parse::<f64>().map_err(|_| fail())?;
         return if n.is_finite() { Ok(n) } else { Err(fail()) };
     }
-    let regex = Regex::new(r"(\d+(?:\.\d+)?)(ms|s|m|h|d)").expect("constant regex");
-    let mut consumed = 0;
+    let mut rest = text;
     let mut total = 0.0;
-    for capture in regex.captures_iter(text) {
-        let matched = capture.get(0).expect("full match");
-        if matched.start() != consumed {
+    while !rest.is_empty() {
+        let (number, suffix) = decimal_prefix(rest).ok_or_else(fail)?;
+        let (multiplier, tail) = if let Some(tail) = suffix.strip_prefix("ms") {
+            (1.0, tail)
+        } else if let Some(tail) = suffix.strip_prefix('s') {
+            (1000.0, tail)
+        } else if let Some(tail) = suffix.strip_prefix('m') {
+            (60_000.0, tail)
+        } else if let Some(tail) = suffix.strip_prefix('h') {
+            (3_600_000.0, tail)
+        } else if let Some(tail) = suffix.strip_prefix('d') {
+            (86_400_000.0, tail)
+        } else {
             return Err(fail());
-        }
-        consumed = matched.end();
-        let multiplier = match &capture[2] {
-            "ms" => 1.0,
-            "s" => 1000.0,
-            "m" => 60_000.0,
-            "h" => 3_600_000.0,
-            _ => 86_400_000.0,
         };
-        total += capture[1].parse::<f64>().map_err(|_| fail())? * multiplier;
+        total += number.parse::<f64>().map_err(|_| fail())? * multiplier;
+        rest = tail;
     }
-    if consumed != text.len() || consumed == 0 || !total.is_finite() {
-        Err(fail())
-    } else {
+    if total.is_finite() {
         Ok(total)
+    } else {
+        Err(fail())
     }
 }
+
 pub(super) fn parse_bytes(raw: &Value) -> Result<f64> {
     let fail = || {
         CliError::validation(
@@ -207,17 +211,84 @@ pub(super) fn parse_bytes(raw: &Value) -> Result<f64> {
         };
     }
     let text = raw.as_str().ok_or_else(fail)?;
-    let regex = Regex::new(r"(?i)^(\d+(?:\.\d+)?)\s*(b|kb|mb|gb|tb)?$").expect("constant regex");
-    let capture = regex.captures(text).ok_or_else(fail)?;
-    let power = match capture.get(2).map(|m| m.as_str().to_lowercase()).as_deref() {
-        Some("kb") => 1,
-        Some("mb") => 2,
-        Some("gb") => 3,
-        Some("tb") => 4,
-        _ => 0,
+    let (number, suffix) = decimal_prefix(text).ok_or_else(fail)?;
+    let power = match suffix.trim_start().to_lowercase().as_str() {
+        "" | "b" => 0,
+        "kb" => 1,
+        "mb" => 2,
+        "gb" => 3,
+        "tb" => 4,
+        _ => return Err(fail()),
     };
-    let n = (capture[1].parse::<f64>().map_err(|_| fail())? * 1024_f64.powi(power)).round();
+    let n = (number.parse::<f64>().map_err(|_| fail())? * 1024_f64.powi(power)).round();
     if n.is_finite() { Ok(n) } else { Err(fail()) }
+}
+
+/// Match the decimal grammar shared by durations and sizes without regex.
+fn decimal_prefix(text: &str) -> Option<(&str, &str)> {
+    let mut end = text.bytes().take_while(u8::is_ascii_digit).count();
+    if end == 0 {
+        return None;
+    }
+    if text.as_bytes().get(end) == Some(&b'.') {
+        let fraction = text[end + 1..]
+            .bytes()
+            .take_while(u8::is_ascii_digit)
+            .count();
+        if fraction == 0 {
+            return None;
+        }
+        end += 1 + fraction;
+    }
+    Some(text.split_at(end))
+}
+
+#[cfg(feature = "chrono")]
+fn iso_date_shape(text: &str) -> bool {
+    fn digits(text: &str, start: usize, end: usize) -> bool {
+        text.get(start..end)
+            .is_some_and(|part| part.bytes().all(|b| b.is_ascii_digit()))
+    }
+    if !text.is_ascii()
+        || !digits(text, 0, 4)
+        || text.as_bytes().get(4) != Some(&b'-')
+        || !digits(text, 5, 7)
+        || text.as_bytes().get(7) != Some(&b'-')
+        || !digits(text, 8, 10)
+    {
+        return false;
+    }
+    if text.len() == 10 {
+        return true;
+    }
+    if text.as_bytes().get(10) != Some(&b'T')
+        || !digits(text, 11, 13)
+        || text.as_bytes().get(13) != Some(&b':')
+        || !digits(text, 14, 16)
+    {
+        return false;
+    }
+    let mut rest = &text[16..];
+    if let Some(seconds) = rest.strip_prefix(':') {
+        if !digits(seconds, 0, 2) {
+            return false;
+        }
+        rest = &seconds[2..];
+        if let Some(fraction) = rest.strip_prefix('.') {
+            let length = fraction.bytes().take_while(u8::is_ascii_digit).count();
+            if !(1..=3).contains(&length) {
+                return false;
+            }
+            rest = &fraction[length..];
+        }
+    }
+    rest.is_empty()
+        || rest == "Z"
+        || (rest.len() == 6
+            && matches!(rest.as_bytes()[0], b'+' | b'-')
+            && digits(rest, 1, 3)
+            && rest.as_bytes()[3] == b':'
+            && digits(rest, 4, 6))
 }
 
 pub(super) fn parse_number(text: &str) -> std::result::Result<f64, ()> {
@@ -241,5 +312,90 @@ pub(super) fn parse_number(text: &str) -> std::result::Result<f64, ()> {
         })
     } else {
         text.parse().map_err(|_| ())
+    }
+}
+
+#[cfg(all(test, feature = "regex"))]
+mod migration_tests {
+    use super::*;
+
+    #[test]
+    fn duration_and_size_scanners_preserve_the_previous_accepted_grammar() {
+        // Retain the old regex grammar as an independent oracle for the scanner
+        // migration, including whitespace, case folding, partials, and overflow.
+        let duration = Regex::new(r"^(?:\d+(?:\.\d+)?|(?:\d+(?:\.\d+)?(?:ms|s|m|h|d))+)$").unwrap();
+        let bytes = Regex::new(r"(?i)^(\d+(?:\.\d+)?)\s*(b|kb|mb|gb|tb)?$").unwrap();
+        for number in [
+            "", "0", "01", "12", "1.5", ".5", "1.", "+1", "-1", "1e3", "١",
+        ] {
+            for suffix in [
+                "",
+                "ms",
+                "s",
+                "m",
+                "h",
+                "d",
+                "1ms",
+                "30m",
+                "30",
+                "S",
+                " ",
+                "kb",
+                "\u{2003}KB",
+                " Kb",
+                "mb",
+                "TB",
+                "b ",
+                "\n",
+            ] {
+                let text = format!("{number}{suffix}");
+                assert_eq!(
+                    parse_duration(&json!(text)).is_ok(),
+                    duration.is_match(&text) && text.is_ascii(),
+                    "duration: {text:?}"
+                );
+                assert_eq!(
+                    parse_bytes(&json!(text)).is_ok(),
+                    bytes.is_match(&text) && number.is_ascii(),
+                    "size: {text:?}"
+                );
+            }
+        }
+        let overflow = "9".repeat(400);
+        assert!(parse_duration(&json!(format!("{overflow}d"))).is_err());
+        assert!(parse_bytes(&json!(format!("{overflow}tb"))).is_err());
+    }
+
+    #[cfg(feature = "chrono")]
+    #[test]
+    fn iso_shape_preserves_the_previous_grammar_and_handles_truncated_input() {
+        let old = Regex::new(
+            r"^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})?)?$",
+        )
+        .unwrap();
+        for date in ["2026-10-15", "2026-02-31", "2026/10/15", "２０２６-10-15"] {
+            for clock in [
+                "",
+                "T12:30",
+                "T12:30:25",
+                "T12:30:25.1",
+                "T12:30:25.123",
+                "T12:30:25.1234",
+                "T12:30.1",
+                "t12:30",
+            ] {
+                for zone in ["", "Z", "+02:00", "-02:30", "+0200", "z", "\n"] {
+                    let text = format!("{date}{clock}{zone}");
+                    for end in (0..=text.len()).filter(|&i| text.is_char_boundary(i)) {
+                        let text = &text[..end];
+                        assert_eq!(
+                            iso_date_shape(text),
+                            old.is_match(text) && text.is_ascii(),
+                            "{text:?}"
+                        );
+                    }
+                }
+            }
+        }
     }
 }

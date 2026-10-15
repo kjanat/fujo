@@ -1,14 +1,18 @@
 //! Schema-first CLI construction, typed inputs, and injectable execution.
 //!
+//! Defaults enable `completion`, `terminal-prompts`, and `terminal-activity`.
+//! Specialized `regex`, `url`, and `chrono` integrations are opt-in. Disabling
+//! native prompt/activity backends preserves injected prompts and logical events.
+//!
 //! ```
 //! use dreamcli::{cli, command, arg, flag};
 //! let name = arg::string("name");
 //! let loud = flag::boolean("loud").alias("l");
 //! let greet = command("greet")
-//!     .arg(name.clone()).flag(loud.clone())
-//!     .action(move |ctx| {
-//!         let message = format!("Hello, {}!", ctx.get(&name)?);
-//!         ctx.out.log(if ctx.get(&loud)? { message.to_uppercase() } else { message });
+//!     .inputs((name, loud))
+//!     .action(|ctx, (name, loud), ()| {
+//!         let message = format!("Hello, {name}!");
+//!         ctx.out.log(if *loud { message.to_uppercase() } else { message });
 //!         Ok(())
 //!     });
 //! let result = cli("greet").default(greet).execute(["Ada"], Default::default());
@@ -65,6 +69,8 @@
 //! ```
 pub mod cli;
 pub mod command;
+mod execution;
+#[cfg(feature = "completion")]
 pub use dreamcli_complete as completion;
 pub mod config;
 pub use dreamcli_core::error;
@@ -77,6 +83,10 @@ pub use dreamcli_core::resolve;
 pub mod runtime;
 pub use dreamcli_core::schema;
 pub mod testkit;
+pub mod typed;
+pub use typed::InputSet;
+pub use typed::Scope;
+pub use typed::TypedCommand;
 
 pub use cli::Builtins;
 pub use cli::Cli;
@@ -91,6 +101,8 @@ pub use command::group;
 pub use error::CliError;
 pub use error::ErrorKind;
 pub use error::Result;
+pub use execution::AsyncNext;
+pub use execution::LocalFuture;
 pub use output::Output;
 pub use output::OutputOptions;
 pub use output::Verbosity;

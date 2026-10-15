@@ -22,6 +22,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
+mod support;
 
 #[derive(Default)]
 struct Reader(BTreeMap<PathBuf, String>);
@@ -352,4 +353,46 @@ fn invalid_os_arguments_are_structured_errors_instead_of_panics() {
         serde_json::from_str::<dreamcli::Value>(&result.stdout).unwrap()["code"],
         "INVALID_UTF8"
     );
+}
+
+#[test]
+fn async_native_execution_reuses_named_environment_stdin_and_os_decoding() {
+    let host = Host {
+        env: BTreeMap::from([("NAME".into(), "environment".into())]),
+        ..Default::default()
+    };
+    let name = flag::string("name").env("NAME").stdin().required();
+    let app = cli("demo").default(command("demo").inputs(name).action_async(
+        async |ctx, name, ()| {
+            support::yield_once().await;
+            ctx.out.log(name);
+            Ok(())
+        },
+    ));
+    let result = support::run(app.run_with_async(["--name=-"], RunOptions::default(), &host));
+    assert!(result.success(), "{:?}", result.error);
+    // stdin() preserves the buffer terminator; log adds its own newline.
+    assert_eq!(result.stdout, "pipe\n\n");
+    assert_eq!(host.reads.load(Ordering::SeqCst), 1);
+    let result =
+        support::run(app.run_os_with_async(["--name=argument"], RunOptions::default(), &host));
+    assert!(result.success());
+    assert_eq!(result.stdout, "argument\n");
+    assert_eq!(host.reads.load(Ordering::SeqCst), 1);
+    assert!(host.queried.lock().unwrap().contains(&"NAME".into()));
+}
+
+#[test]
+#[cfg(unix)]
+fn async_native_execution_reports_invalid_utf8_before_actions() {
+    use std::os::unix::ffi::OsStringExt;
+    let app = cli("demo").default(
+        command("demo").action_async(async |_| panic!("invalid argv must stop execution")),
+    );
+    let result = support::run(app.run_os_with_async(
+        [std::ffi::OsString::from_vec(vec![0xff])],
+        RunOptions::default(),
+        &Host::default(),
+    ));
+    assert_eq!(result.error.unwrap().code, "INVALID_UTF8");
 }

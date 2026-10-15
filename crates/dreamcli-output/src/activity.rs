@@ -1,153 +1,37 @@
 //! A shared terminal line, with handle-owned spinner timers and logical events.
 use super::ActivityEvent;
 use super::Output;
-use super::State;
-use std::sync::Arc;
-use std::sync::mpsc;
-use std::thread::JoinHandle;
-use std::thread::{self};
-use std::time::Duration;
 
-const FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-const TICK: Duration = Duration::from_millis(80);
-
-pub(super) struct Activities {
-    active: Vec<Line>,
-    next_id: u64,
-    drawn: bool,
-    pub(super) line_start: bool,
-}
-impl Default for Activities {
-    fn default() -> Self {
-        Self {
-            active: vec![],
-            next_id: 0,
-            drawn: false,
-            line_start: true,
-        }
-    }
-}
-struct Line {
-    id: u64,
-    label: String,
-    kind: Kind,
-}
-enum Kind {
-    Spinner(usize),
-    Progress { current: u64, total: u64 },
-}
-impl Line {
-    fn render(&self) -> String {
-        match self.kind {
-            Kind::Spinner(frame) => format!("{} {}", FRAMES[frame], self.label),
-            Kind::Progress { current, total } => {
-                let percent = if total == 0 {
-                    100
-                } else {
-                    (u128::from(current) * 100 / u128::from(total)) as usize
-                };
-                let filled = percent / 5;
-                format!(
-                    "{} [{}{}] {percent:>3}% {current}/{total}",
-                    self.label,
-                    "=".repeat(filled),
-                    " ".repeat(20 - filled)
-                )
-            }
-        }
-    }
-}
-impl State {
-    pub(super) fn clear_activity(&mut self) {
-        if self.activities.drawn {
-            self.emit("\r\x1b[2K", true, false);
-            self.activities.drawn = false;
-        }
-    }
-    pub(super) fn render_activity(&mut self) {
-        if !self.activities.line_start || self.error.is_some() {
-            return;
-        }
-        if let Some(line) = self.activities.active.last() {
-            let text = line.render();
-            self.clear_activity();
-            self.emit(&text, true, false);
-            self.activities.drawn = true;
-        }
-    }
-    fn begin_activity(&mut self, label: String, kind: Kind) -> u64 {
-        let id = self.activities.next_id;
-        self.activities.next_id += 1;
-        self.activities.active.push(Line { id, label, kind });
-        self.render_activity();
-        id
-    }
-    fn tick(&mut self, id: u64) {
-        if let Some(line) = self.activities.active.iter_mut().find(|line| line.id == id)
-            && let Kind::Spinner(frame) = &mut line.kind
-        {
-            *frame = (*frame + 1) % FRAMES.len();
-            if self
-                .activities
-                .active
-                .last()
-                .is_some_and(|line| line.id == id)
-            {
-                self.render_activity();
-            }
-        }
-    }
-}
+#[cfg(feature = "terminal-activity")]
+mod terminal;
+#[cfg(feature = "terminal-activity")]
+pub(super) use terminal::Activities;
+#[cfg(feature = "terminal-activity")]
+use terminal::{Kind, Ticker};
 
 impl Output {
-    /// Animate on a TTY every 80 ms, even while the handler is blocked doing work.
+    /// With `terminal-activity`, animate on a TTY every 80 ms while work runs.
     /// JSON, quiet, and non-TTY outputs remain silent. Capture-only outputs have
-    /// no timer; use `events()` to inspect the logical lifecycle in tests.
+    /// no timer. Without the feature, only logical events are recorded.
+    /// Use `events()` to inspect the lifecycle in tests.
     pub fn spinner(&self, label: impl Into<String>) -> Spinner {
         let label = label.into();
-        let id = self.begin_activity(&label, Kind::Spinner(0));
-        let ticker = id.and_then(|id| {
-            self.state.lock().expect("output lock").stderr.as_ref()?;
-            let state = Arc::downgrade(&self.state);
-            let (stop, stopped) = mpsc::channel();
-            match thread::Builder::new()
-                .name("terminal-spinner".into())
-                .spawn(move || {
-                    while matches!(
-                        stopped.recv_timeout(TICK),
-                        Err(mpsc::RecvTimeoutError::Timeout)
-                    ) {
-                        let Some(state) = state.upgrade() else { break };
-                        let mut state = state.lock().expect("output lock");
-                        if state.error.is_some() {
-                            break;
-                        }
-                        state.tick(id);
-                    }
-                }) {
-                Ok(thread) => Some(Ticker { stop, thread }),
-                Err(error) => {
-                    self.state
-                        .lock()
-                        .expect("output lock")
-                        .error
-                        .get_or_insert_with(|| error.into());
-                    None
-                }
-            }
-        });
+        let id = self.begin_activity(&label, None);
+        #[cfg(feature = "terminal-activity")]
+        let ticker = Ticker::start(self, id);
         Spinner {
             output: self.clone(),
             label,
             id,
+            #[cfg(feature = "terminal-activity")]
             ticker,
             finished: false,
         }
     }
-    /// Render a bounded bar with a percentage and item count on every update.
+    /// Record progress and, with `terminal-activity`, render a bounded TTY bar.
     pub fn progress(&self, label: impl Into<String>, total: u64) -> Progress {
         let label = label.into();
-        let id = self.begin_activity(&label, Kind::Progress { current: 0, total });
+        let id = self.begin_activity(&label, Some(total));
         Progress {
             output: self.clone(),
             label,
@@ -157,24 +41,36 @@ impl Output {
             finished: false,
         }
     }
-    fn begin_activity(&self, label: &str, kind: Kind) -> Option<u64> {
+    fn begin_activity(&self, label: &str, total: Option<u64>) -> Option<u64> {
         self.event(ActivityEvent::Start {
             label: label.into(),
         });
-        self.activity_visible().then(|| {
-            self.state
-                .lock()
-                .expect("output lock")
-                .begin_activity(label.into(), kind)
-        })
+        #[cfg(feature = "terminal-activity")]
+        {
+            self.activity_visible().then(|| {
+                self.state.lock().expect("output lock").begin_activity(
+                    label.into(),
+                    total.map_or(Kind::Spinner(0), |total| Kind::Progress {
+                        current: 0,
+                        total,
+                    }),
+                )
+            })
+        }
+        #[cfg(not(feature = "terminal-activity"))]
+        {
+            let _ = total;
+            None
+        }
     }
-    fn end_activity(&self, id: Option<u64>, label: String, success: bool) {
+    fn end_activity(&self, _id: Option<u64>, label: String, success: bool) {
         let mut state = self.state.lock().expect("output lock");
         state.events.push(ActivityEvent::Finish {
             label: label.clone(),
             success,
         });
-        if let Some(id) = id {
+        #[cfg(feature = "terminal-activity")]
+        if let Some(id) = _id {
             state.clear_activity();
             state.activities.active.retain(|line| line.id != id);
             let symbol = if success { "✓" } else { "✗" };
@@ -183,37 +79,30 @@ impl Output {
     }
 }
 
-struct Ticker {
-    stop: mpsc::Sender<()>,
-    thread: JoinHandle<()>,
-}
-impl Ticker {
-    fn stop(self) {
-        let _ = self.stop.send(());
-        let _ = self.thread.join();
-    }
-}
-
-/// A spinner whose timer stops and joins before completion or `Drop` returns.
+/// A logical spinner with an optional terminal timer, joined before completion.
 pub struct Spinner {
     output: Output,
     label: String,
     id: Option<u64>,
+    #[cfg(feature = "terminal-activity")]
     ticker: Option<Ticker>,
     finished: bool,
 }
 impl Spinner {
     pub fn update(&mut self, label: impl Into<String>) {
         self.label = label.into();
-        let mut state = self.output.state.lock().expect("output lock");
-        if let Some(line) = state
-            .activities
-            .active
-            .iter_mut()
-            .find(|line| Some(line.id) == self.id)
+        #[cfg(feature = "terminal-activity")]
         {
-            line.label.clone_from(&self.label);
-            state.render_activity();
+            let mut state = self.output.state.lock().expect("output lock");
+            if let Some(line) = state
+                .activities
+                .active
+                .iter_mut()
+                .find(|line| Some(line.id) == self.id)
+            {
+                line.label.clone_from(&self.label);
+                state.render_activity();
+            }
         }
     }
     pub fn succeed(mut self, message: impl Into<String>) {
@@ -223,6 +112,7 @@ impl Spinner {
         self.finish(message.into(), false);
     }
     fn finish(&mut self, label: String, success: bool) {
+        #[cfg(feature = "terminal-activity")]
         if let Some(ticker) = self.ticker.take() {
             ticker.stop();
         }
@@ -255,6 +145,7 @@ impl Progress {
             current: self.current,
             total: self.total,
         });
+        #[cfg(feature = "terminal-activity")]
         if let Some(line) = state
             .activities
             .active
@@ -290,14 +181,17 @@ impl Drop for Progress {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "terminal-activity"))]
 mod tests {
+    use super::terminal::TICK;
     use super::*;
     use crate::Capture;
     use crate::OutputOptions;
     use crate::Verbosity;
     use std::io::Write;
     use std::sync::Mutex;
+    use std::sync::{Arc, mpsc};
+    use std::time::Duration;
     use std::time::Instant;
 
     #[derive(Clone, Default)]

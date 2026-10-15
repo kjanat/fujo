@@ -1,3 +1,4 @@
+#![cfg(all(feature = "regex", feature = "url", feature = "chrono"))]
 use dreamcli::Value;
 use dreamcli::arg;
 use dreamcli::command;
