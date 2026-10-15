@@ -621,23 +621,74 @@ fn opaque_path_defaults_obey_filesystem_policy_without_json_encoding() {
 
 #[test]
 #[cfg(unix)]
-fn native_path_defaults_support_non_unicode_filesystem_names() {
+fn native_path_defaults_preserve_non_unicode_paths_for_injected_filesystems() {
     use std::ffi::OsString;
     use std::os::unix::ffi::OsStringExt;
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join(OsString::from_vec(vec![b'f', 0xff]));
-    std::fs::write(&path, "fixture").unwrap();
+
+    struct ExactPath {
+        path: PathBuf,
+        present: bool,
+    }
+    impl FileSystem for ExactPath {
+        fn stat(&self, path: &Path) -> fujo::Result<Option<PathType>> {
+            assert_eq!(path, self.path);
+            assert!(path.to_str().is_none());
+            Ok(self.present.then_some(PathType::File))
+        }
+        fn mkdir(&self, _: &Path) -> fujo::Result<()> {
+            panic!("file validation should not create directories")
+        }
+    }
+
+    let path = PathBuf::from(OsString::from_vec(vec![b'f', 0xff]));
     let file = flag::path("file")
         .path_checks(PathChecks::file())
-        .default(path);
-    let mut options = RunOptions::default();
-    options.resolve.filesystem_policy = CheckPolicy::Required;
-    options.resolve.filesystem = Some(Arc::new(fujo::runtime::NativeRuntime));
+        .default(path.clone());
     let command = Command::new("app").flag(file.clone());
-    assert!(run(command.clone(), &[], options.clone()).success());
-    std::fs::remove_file(dir.path().join(OsString::from_vec(vec![b'f', 0xff]))).unwrap();
-    assert_eq!(
-        run(command, &[], options).error.unwrap().code,
-        "CONSTRAINT_VIOLATED"
-    );
+    for present in [true, false] {
+        let mut options = RunOptions::default();
+        options.resolve.filesystem_policy = CheckPolicy::Required;
+        options.resolve.filesystem = Some(Arc::new(ExactPath {
+            path: path.clone(),
+            present,
+        }));
+        let result = run(command.clone(), &[], options);
+        if present {
+            assert!(result.success(), "{:?}", result.error);
+            assert_eq!(result.resolved.unwrap().get(&file).unwrap(), path);
+        } else {
+            assert_eq!(result.error.unwrap().code, "CONSTRAINT_VIOLATED");
+        }
+    }
+}
+
+#[test]
+fn native_path_defaults_check_supported_filesystem_names() {
+    let dir = tempfile::tempdir().unwrap();
+    let names = [
+        std::ffi::OsString::from("f-東京"),
+        // Retain the original native non-UTF-8 fixture on Linux too.
+        #[cfg(target_os = "linux")]
+        {
+            use std::os::unix::ffi::OsStringExt;
+            std::ffi::OsString::from_vec(vec![b'f', 0xff])
+        },
+    ];
+    for name in names {
+        let path = dir.path().join(name);
+        std::fs::write(&path, "fixture").unwrap();
+        let file = flag::path("file")
+            .path_checks(PathChecks::file())
+            .default(path.clone());
+        let mut options = RunOptions::default();
+        options.resolve.filesystem_policy = CheckPolicy::Required;
+        options.resolve.filesystem = Some(Arc::new(fujo::runtime::NativeRuntime));
+        let command = Command::new("app").flag(file.clone());
+        assert!(run(command.clone(), &[], options.clone()).success());
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(
+            run(command, &[], options).error.unwrap().code,
+            "CONSTRAINT_VIOLATED"
+        );
+    }
 }
