@@ -264,7 +264,7 @@ fn every_example_has_non_executing_json_help_and_four_shell_completions() {
         async_build::app(),
     ] {
         let result = invoke(app.clone(), &["--help", "--json"], RunOptions::default());
-        assert_eq!(document(&result)["format"], "fujo-rust");
+        assert_eq!(document(&result)["format"], "fujo");
         assert!(result.stderr.is_empty());
         for shell in ["bash", "zsh", "fish", "powershell"] {
             let result = invoke(app.clone(), &["completions", shell], RunOptions::default());

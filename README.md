@@ -427,7 +427,7 @@ assert_eq!(result.stdout, "Ada\n");
 Inject `TestPrompter`, `FileSystem`, or a complete `Runtime` for other test cases.
 `testkit::run_cli(&app, ...)` preserves the complete application configuration.
 `run_command_with_builtins` lets command-only tests release builtin names.
-`Cli::definition()` exports Rust schema metadata with `format: "fujo-rust"`
+`Cli::definition()` exports Rust schema metadata with `format: "fujo"`
 and `version: 1`. The discriminator was renamed from `dreamcli-rust` as part
 of the Fujo rename; the document version is unchanged.
 `json_schema::input_schema()` describes JSON-representable resolved

@@ -81,7 +81,7 @@ fn property(input: &InputSchema) -> Value {
     value
 }
 pub fn definition(program: &ProgramSchema) -> Value {
-    json!({"format":"fujo-rust", "version":1,"name":program.name,"description":program.description,"programVersion":program.version,"commands":program.commands.iter().map(command_definition).collect::<Vec<_>>(),"default":program.default.as_ref().map(command_definition),"builtins":program.builtins,"flags":program.flags.iter().map(element_definition).collect::<Vec<_>>()})
+    json!({"format":"fujo", "version":1,"name":program.name,"description":program.description,"programVersion":program.version,"commands":program.commands.iter().map(command_definition).collect::<Vec<_>>(),"default":program.default.as_ref().map(command_definition),"builtins":program.builtins,"flags":program.flags.iter().map(element_definition).collect::<Vec<_>>()})
 }
 
 fn element_definition(input: &InputSchema) -> Value {

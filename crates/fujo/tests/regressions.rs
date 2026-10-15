@@ -85,7 +85,7 @@ fn json_help_exports_root_default_and_dispatched_command_without_executing() {
         assert!(result.success());
         assert!(result.stderr.is_empty());
         let document: Value = serde_json::from_str(&result.stdout).unwrap();
-        assert_eq!(document["format"], "fujo-rust");
+        assert_eq!(document["format"], "fujo");
         assert_eq!(document["version"], 1);
         assert_eq!(document["default"]["flags"][0]["name"], "name");
     }

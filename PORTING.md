@@ -128,10 +128,10 @@ depend on parsing, resolution, or completion.
 
 ## Schema documents and formats
 
-The Rust definition document uses `format: "fujo-rust"` and `version: 1`.
+The Rust definition document uses `format: "fujo"` and `version: 1`.
 The Fujo rename changes the former `dreamcli-rust` wire-format discriminator;
 the format version remains `1`. Consumers matching the old discriminator must
-update to `fujo-rust`.
+update to `fujo`.
 It describes Rust input metadata and excludes executable callbacks. It is not the
 TypeScript definition document wire format and does not reconstruct custom Rust
 types or handlers. Input schemas use JSON Schema draft 2020-12 for the JSON
