@@ -8,6 +8,9 @@ mod release;
 #[allow(dead_code)]
 #[path = "../examples/settings.rs"]
 mod settings;
+#[allow(dead_code)]
+#[path = "../examples/terminal.rs"]
+mod terminal;
 
 use dreamcli::Cli;
 use dreamcli::RunOptions;
@@ -239,7 +242,12 @@ fn settings_supports_validation_schema_and_cross_input_policy() {
 
 #[test]
 fn every_example_has_non_executing_json_help_and_four_shell_completions() {
-    for app in [release::app(), batch::app(), settings::app()] {
+    for app in [
+        release::app(),
+        batch::app(),
+        settings::app(),
+        terminal::app(),
+    ] {
         let result = invoke(app.clone(), &["--help", "--json"], RunOptions::default());
         assert_eq!(document(&result)["format"], "dreamcli-rust");
         assert!(result.stderr.is_empty());
@@ -248,5 +256,72 @@ fn every_example_has_non_executing_json_help_and_four_shell_completions() {
             assert!(result.success());
             assert!(!result.stdout.is_empty());
         }
+    }
+}
+
+#[test]
+fn terminal_demo_supports_tables_json_quiet_and_failure_without_waiting() {
+    let args = ["--steps=3", "--delay=0ms"];
+    let plain = invoke(terminal::app(), &args, RunOptions::default());
+    assert!(plain.success());
+    assert!(plain.stdout.contains("Phase"));
+    assert!(plain.stdout.contains("Build"));
+    assert!(!plain.stdout.contains('\x1b'));
+    assert!(!plain.stderr.contains('\x1b'));
+    assert_eq!(plain.activities.len(), 9); // Three activity lifecycles and three item updates.
+
+    let machine = invoke(
+        terminal::app(),
+        &["--steps=3", "--delay=0ms", "--json"],
+        RunOptions::default(),
+    );
+    assert_eq!(
+        document(&machine),
+        json!([
+            {"phase":"Build", "items":3, "status":"passed"},
+            {"phase":"Verify", "items":3, "status":"passed"},
+        ])
+    );
+    assert!(!machine.stderr.contains('\x1b'));
+
+    let quiet = invoke(
+        terminal::app(),
+        &["--steps=3", "--delay=0ms", "--quiet", "--verbose"],
+        RunOptions::default(),
+    );
+    assert!(quiet.success());
+    assert!(quiet.stderr.is_empty());
+    assert!(!quiet.stdout.contains("Found local inputs"));
+    assert!(quiet.stdout.contains("Build"));
+
+    let failed = invoke(
+        terminal::app(),
+        &["--steps=3", "--delay=0ms", "--fail-at=2", "--json"],
+        RunOptions::default(),
+    );
+    assert_eq!(failed.exit_code, 2);
+    let error: Value = serde_json::from_str(&failed.stdout).unwrap();
+    assert_eq!(error["code"], "DEMO_FAILURE");
+    assert_eq!(failed.activities.len(), 5);
+    assert!(matches!(
+        failed.activities.last(),
+        Some(dreamcli::output::ActivityEvent::Finish { success: false, .. })
+    ));
+}
+
+#[test]
+fn terminal_demo_rejects_invalid_native_limits_before_work() {
+    for (args, code) in [
+        (vec!["--steps=0"], "INVALID_VALUE"),
+        (vec!["--steps=101"], "INVALID_STEPS"),
+        (vec!["--delay=2s"], "INVALID_DELAY"),
+        (
+            vec!["--steps=2", "--fail-at=3", "--delay=0ms"],
+            "INVALID_FAIL_AT",
+        ),
+    ] {
+        let result = invoke(terminal::app(), &args, RunOptions::default());
+        assert_eq!(result.error.unwrap().code, code);
+        assert!(result.activities.is_empty());
     }
 }

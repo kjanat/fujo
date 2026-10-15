@@ -10,9 +10,44 @@ these exact definitions and execute them with injected inputs.
 | [release.rs](release.rs)   | `app()` near the top; version types below | Native `Version` and `Bump`, checked version arithmetic, config/env/CLI precedence, conditional secret prompts, typed derived plans, middleware, JSON encoding without Serde on input types |
 | [batch.rs](batch.rs)       | `app()`; job/result types below           | Variadic checked paths, nonzero worker counts, typed priority maps, validated/deduplicated arrays, durations, bytes, global flags, collision policy, provenance, tables, and progress       |
 | [settings.rs](settings.rs) | `app()` with a local command factory      | Nested commands, inherited profile, native URL/port values, production HTTPS policy, explicit stdin credentials, redaction, effective settings, provenance, and JSON Schema                 |
+| [terminal.rs](terminal.rs) | `app()` with a single action              | Automatic spinner animation, label changes, live progress bars, status messages during progress, verbose diagnostics, failure cleanup, tables, and JSON/quiet output                        |
 
-These examples build release and batch plans and inspect settings. Running them
+These examples build release and batch plans, inspect settings, and simulate work. Running them
 does not upload artifacts, copy/move/link files, or write configuration.
+
+## Live terminal showcase
+
+Run this in an interactive terminal without `--json`:
+
+```sh
+cargo run -p dreamcli --example terminal
+```
+
+Over about five seconds, the demo discovers inputs with an animated spinner,
+updates its label while checking dependencies, builds 24 simulated items with a
+live bar and percentage, and animates verification before printing a result table.
+A status message appears halfway through without overwriting the bar. Spinners
+tick every 80 ms even while the action is blocked in `thread::sleep`; the action
+does not manually draw frames.
+
+```sh
+cargo run -p dreamcli --example terminal -- --steps=40 --delay=150ms --verbose
+cargo run -p dreamcli --example terminal -- --fail-at=8
+cargo run -p dreamcli --example terminal -- --delay=0ms --json
+cargo run -p dreamcli --example terminal -- --quiet
+```
+
+`--steps` is a native `NonZeroU16` constrained to 1–100; `--delay` is a native
+`Duration` capped at one second per item. `--fail-at` must identify an existing
+item; a simulated failure clears the bar, reports `DEMO_FAILURE`, exits 2, and
+skips the success table. `--verbose` adds diagnostics between progress updates;
+`--quiet` suppresses them along with status and animation. JSON produces a result
+array on stdout and keeps human messages on stderr. Piping suppresses animation.
+
+The release and batch planners finish immediately, so they usually cannot display
+multiple frames. This showcase intentionally paces simulated work. Captures omit
+transient frames and retain logical activity events; the Unix PTY check in
+`scripts/check-terminal.py` verifies real frame timing and terminal rendering.
 
 ## Release planner
 

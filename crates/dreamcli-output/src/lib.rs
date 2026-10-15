@@ -1,4 +1,7 @@
-//! Synchronous, writer-based output with shared capture and RAII activity handles.
+//! Writer-based output with shared capture and RAII terminal activities.
+mod activity;
+pub use activity::Progress;
+pub use activity::Spinner;
 use dreamcli_error::CliError;
 use dreamcli_error::Result;
 use serde::Serialize;
@@ -51,6 +54,7 @@ struct State {
     error: Option<CliError>,
     exit_code: i32,
     events: Vec<ActivityEvent>,
+    activities: activity::Activities,
 }
 #[derive(Clone)]
 pub struct Output {
@@ -75,10 +79,12 @@ impl Output {
                 error: None,
                 exit_code: 0,
                 events: vec![],
+                activities: activity::Activities::default(),
             })),
         }
     }
-    /// All writes finish before this method returns; writer errors reach `finish`.
+    /// Writes are flushed immediately; writer errors reach `finish`.
+    /// TTY spinners also write transient frames from a scoped background thread.
     pub fn with_writers(
         stdout: impl Write + Send + 'static,
         stderr: impl Write + Send + 'static,
@@ -101,6 +107,7 @@ impl Output {
             state: self.state.clone(),
         }
     }
+    /// Retained output, excluding transient activity frames and cursor controls.
     pub fn captured(&self) -> Capture {
         self.state.lock().expect("output lock").capture.clone()
     }
@@ -174,23 +181,7 @@ impl Output {
     }
     fn write(&self, text: &str, stderr: bool) {
         let mut state = self.state.lock().expect("output lock");
-        if stderr {
-            state.capture.stderr.push_str(text);
-        } else {
-            state.capture.stdout.push_str(text);
-        }
-        let writer = if stderr {
-            &mut state.stderr
-        } else {
-            &mut state.stdout
-        };
-        if let Some(writer) = writer
-            && let Err(error) = writer
-                .write_all(text.as_bytes())
-                .and_then(|_| writer.flush())
-        {
-            state.error.get_or_insert_with(|| error.into());
-        }
+        state.write(text, stderr);
     }
     fn event(&self, event: ActivityEvent) {
         self.state.lock().expect("output lock").events.push(event);
@@ -277,35 +268,40 @@ impl Output {
         }
         self.finish()
     }
-    pub fn spinner(&self, label: impl Into<String>) -> Spinner {
-        let label = label.into();
-        self.event(ActivityEvent::Start {
-            label: label.clone(),
-        });
-        if self.activity_visible() {
-            self.write(&format!("{label}…\r"), true);
-        }
-        Spinner {
-            output: self.clone(),
-            label,
-            finished: false,
-        }
-    }
-    pub fn progress(&self, label: impl Into<String>, total: u64) -> Progress {
-        let label = label.into();
-        self.event(ActivityEvent::Start {
-            label: label.clone(),
-        });
-        Progress {
-            output: self.clone(),
-            label,
-            total,
-            current: 0,
-            finished: false,
-        }
-    }
     fn activity_visible(&self) -> bool {
         self.options.tty && !self.options.json && self.options.verbosity != Verbosity::Quiet
+    }
+}
+impl State {
+    fn write(&mut self, text: &str, stderr: bool) {
+        if text.is_empty() {
+            return;
+        }
+        self.clear_activity();
+        self.emit(text, stderr, true);
+        self.activities.line_start = text.ends_with('\n');
+        self.render_activity();
+    }
+    fn emit(&mut self, text: &str, stderr: bool, retain: bool) {
+        if retain {
+            if stderr {
+                self.capture.stderr.push_str(text);
+            } else {
+                self.capture.stdout.push_str(text);
+            }
+        }
+        let writer = if stderr {
+            &mut self.stderr
+        } else {
+            &mut self.stdout
+        };
+        if let Some(writer) = writer
+            && let Err(error) = writer
+                .write_all(text.as_bytes())
+                .and_then(|_| writer.flush())
+        {
+            self.error.get_or_insert_with(|| error.into());
+        }
     }
 }
 #[derive(Debug, Clone)]
@@ -328,92 +324,6 @@ pub enum TableFormat {
     Csv,
     Tsv,
     Json,
-}
-pub struct Spinner {
-    output: Output,
-    label: String,
-    finished: bool,
-}
-impl Spinner {
-    pub fn update(&mut self, label: impl Into<String>) {
-        self.label = label.into();
-        if self.output.activity_visible() {
-            self.output
-                .write(&format!("\r\x1b[2K{}…", self.label), true);
-        }
-    }
-    pub fn succeed(mut self, message: impl Into<String>) {
-        self.finish(message.into(), true);
-    }
-    pub fn fail(mut self, message: impl Into<String>) {
-        self.finish(message.into(), false);
-    }
-    fn finish(&mut self, label: String, success: bool) {
-        self.finished = true;
-        self.output.event(ActivityEvent::Finish {
-            label: label.clone(),
-            success,
-        });
-        if self.output.activity_visible() {
-            self.output.write(&format!("\r\x1b[2K{label}\n"), true);
-        }
-    }
-}
-impl Drop for Spinner {
-    fn drop(&mut self) {
-        if !self.finished {
-            self.finish(self.label.clone(), false);
-        }
-    }
-}
-pub struct Progress {
-    output: Output,
-    label: String,
-    total: u64,
-    current: u64,
-    finished: bool,
-}
-impl Progress {
-    pub fn update(&mut self, current: u64) {
-        self.current = current.min(self.total);
-        self.output.event(ActivityEvent::Update {
-            label: self.label.clone(),
-            current: self.current,
-            total: self.total,
-        });
-        if self.output.activity_visible() {
-            self.output.write(
-                &format!("\r\x1b[2K{} {}/{}", self.label, self.current, self.total),
-                true,
-            );
-        }
-    }
-    pub fn increment(&mut self, delta: u64) {
-        self.update(self.current.saturating_add(delta));
-    }
-    pub fn done(mut self, message: impl Into<String>) {
-        self.finish(message.into(), true);
-    }
-    pub fn fail(mut self, message: impl Into<String>) {
-        self.finish(message.into(), false);
-    }
-    fn finish(&mut self, label: String, success: bool) {
-        self.finished = true;
-        self.output.event(ActivityEvent::Finish {
-            label: label.clone(),
-            success,
-        });
-        if self.output.activity_visible() {
-            self.output.write(&format!("\r\x1b[2K{label}\n"), true);
-        }
-    }
-}
-impl Drop for Progress {
-    fn drop(&mut self) {
-        if !self.finished {
-            self.finish(self.label.clone(), false);
-        }
-    }
 }
 fn display_value(value: &Value) -> String {
     match value {

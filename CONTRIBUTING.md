@@ -18,6 +18,8 @@ doctests with ordinary `cargo test` because `--all-targets` excludes them.
 ## Try the examples
 
 ```sh
+cargo run -p dreamcli --example terminal
+cargo run -p dreamcli --example terminal -- --verbose --fail-at=8
 cargo run -p dreamcli --example greet -- Ada --loud --times 2
 cargo run -p dreamcli --example greet -- --help
 cargo run -p dreamcli --example greet -- completions bash
@@ -34,6 +36,20 @@ commands. It simulates deployment and does not contact an external service.
 
 The [example CLI guide](crates/dreamcli/examples/README.md) explains the larger
 examples, their input sources, commands, type checks, and test coverage.
+
+The terminal example deliberately runs for about five seconds so its spinner
+frames, progress bar, and status transitions are visible. The other examples
+produce their plans immediately. On Unix, verify that frames arrive over time
+through an actual PTY, that logs and tables stay intact, and that JSON, quiet,
+and piped modes contain no animation controls:
+
+```sh
+cargo build -p dreamcli --example terminal
+python3 scripts/check-terminal.py
+```
+
+The checker uses only Python's standard library and accepts a binary path as
+its optional first argument (for example, when using `CARGO_TARGET_DIR`).
 
 ## Reference fixtures
 
