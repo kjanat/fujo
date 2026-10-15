@@ -227,9 +227,20 @@ using async libraries choose and drive their own runtime inside an action.
 Handlers use `ctx.out` for logs, status messages, JSON, tables, color, spinners,
 and progress. JSON mode reserves stdout for structured data; human messages go
 to stderr. Quiet mode suppresses info and status while retaining logs, warnings,
-and errors. Activity handles update explicitly and clean up on `Drop`; they are
-silent when piped or in JSON/quiet mode. Output writers are synchronous, and
-writer failures propagate to the run result.
+and errors. TTY spinners animate every 80 ms while handlers work; progress handles
+draw a bar, percentage, and item count on each update. Logs and tables temporarily
+clear the shared activity line, then restore it. Finishing or dropping a spinner
+stops and joins its timer. Activities are silent when piped or in JSON/quiet mode.
+Captures retain messages and completion lines, excluding transient frames and
+cursor controls; `events()` records logical activity lifecycles. Capture-only
+outputs have no timer. Writer failures propagate to the run result.
+
+Try the paced terminal showcase in an interactive terminal (about five seconds):
+
+```sh
+cargo run -p dreamcli --example terminal
+cargo run -p dreamcli --example terminal -- --verbose --fail-at=8
+```
 
 `--help` and optional `--version` run before input validation. `--json`, `--quiet`,
 `-q`, and help can be released to application flags with `Builtins`. Everything
@@ -306,6 +317,10 @@ runs injected checks and records skips. Native runs inject a filesystem.
 Use `PathChecks::file()` for existing input files and
 `PathChecks::file().allow_missing()` for output files that may be new.
 
-Runnable examples are in `crates/dreamcli/examples/`. Build and validation commands
+The [example CLI guide](crates/dreamcli/examples/README.md) walks through a release
+planner, batch-job planner, nested settings inspector, and live terminal demo, each with its command
+logic kept in one `app()` function. Their actual definitions are exercised by
+integration tests, and compile-fail checks demonstrate the native type guarantees.
+Build and validation commands
 are in [CONTRIBUTING.md](CONTRIBUTING.md). Port compatibility and deliberate Rust
 differences are documented in [PORTING.md](PORTING.md).

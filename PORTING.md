@@ -43,8 +43,12 @@ or identical text formatting.
 | Process exit calls                      | Return `std::process::ExitCode` from `main`                          |
 
 Rust closures are synchronous. Async applications own their executor rather than
-having the framework select one. Activity handles render on explicit updates and
-scope completion rather than owning background animation timers. Terminal prompts
+having the framework select one. Writer-backed TTY spinners own a small standard
+library timer thread that stops and joins on completion or `Drop`; no executor
+is required. Progress handles render on explicit updates. A shared terminal line
+keeps logs and tables readable during activities. Transient frames are excluded
+from captures; logical activity events remain available in every output mode.
+Terminal prompts
 use line input; secret inputs use a native password reader rather than a JavaScript
 terminal widget implementation.
 
@@ -72,6 +76,11 @@ runtime default. JSON help uses the Rust definition format below.
 Filesystem checks require an injected capability during process-free execution.
 The default policy records skipped checks; `Required` fails and `Disabled`
 explicitly opts out. Native execution supplies the filesystem automatically.
+
+Filesystem capabilities use `&Path`, preserving native path names without JSON
+or UTF-8 conversion. Checks apply to opaque and non-Unicode native defaults too.
+A scalar positional default becomes a one-element vector when converted with
+`.variadic()`, preserving the required/defaulted accessor guarantee.
 
 ## Schema documents and formats
 

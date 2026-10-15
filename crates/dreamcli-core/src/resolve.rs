@@ -19,6 +19,8 @@ use serde::Serialize;
 use serde_json::Value;
 use serde_json::json;
 use std::collections::BTreeMap;
+use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -66,8 +68,8 @@ pub struct InputSources {
 
 /// Filesystem checks are explicit capabilities, shared by native and test adapters.
 pub trait FileSystem: Send + Sync {
-    fn stat(&self, path: &str) -> Result<Option<PathType>>;
-    fn mkdir(&self, path: &str) -> Result<()>;
+    fn stat(&self, path: &Path) -> Result<Option<PathType>>;
+    fn mkdir(&self, path: &Path) -> Result<()>;
 }
 pub type Interactive =
     Arc<dyn Fn(&Resolved) -> Result<BTreeMap<String, Option<crate::prompt::Prompt>>> + Send + Sync>;
@@ -409,6 +411,17 @@ fn resolve_input(
     } else if let Some(default) = &input.native_default {
         if let Some(value) = input.default_validation_json(default) {
             validate_default(input, &value)?;
+        }
+        if let Some(path) = default.inner.downcast_ref::<PathBuf>() {
+            validate_path_values(input, &[path.as_path()], options, skipped)?;
+        } else if let Some(paths) = default.inner.downcast_ref::<Vec<PathBuf>>() {
+            validate_path_values(
+                input,
+                &paths.iter().map(PathBuf::as_path).collect::<Vec<_>>(),
+                options,
+                skipped,
+            )?;
+        } else if let Some(value) = input.default_validation_json(default) {
             validate_paths(input, &value, options, skipped)?;
         }
         (default.clone(), Provenance::at(Stage::Default))
@@ -592,6 +605,24 @@ fn validate_paths(
     options: &ResolveOptions,
     skipped: &mut Vec<SkippedCheck>,
 ) -> Result<()> {
+    let values: Vec<_> = match value {
+        Value::Array(values) => values.iter().collect(),
+        Value::Object(values) => values.values().collect(),
+        _ => vec![value],
+    };
+    let paths: Vec<_> = values
+        .into_iter()
+        .filter_map(Value::as_str)
+        .map(Path::new)
+        .collect();
+    validate_path_values(input, &paths, options, skipped)
+}
+fn validate_path_values(
+    input: &InputSchema,
+    paths: &[&Path],
+    options: &ResolveOptions,
+    skipped: &mut Vec<SkippedCheck>,
+) -> Result<()> {
     let element = input.element.as_deref().unwrap_or(input);
     let Some(checks) = &element.path_checks else {
         return Ok(());
@@ -626,15 +657,7 @@ fn validate_paths(
         });
         return Ok(());
     };
-    let values = match value {
-        Value::Array(values) => values.iter().collect::<Vec<_>>(),
-        Value::Object(values) => values.values().collect(),
-        _ => vec![value],
-    };
-    for value in values {
-        let Some(path) = value.as_str() else {
-            continue;
-        };
+    for path in paths {
         let mut actual = fs
             .stat(path)
             .map_err(|e| input.failure("CONSTRAINT_VIOLATED", &e.message, false))?;
