@@ -1,3 +1,4 @@
+#![cfg(feature = "completion")]
 use dreamcli::cli;
 use dreamcli::command;
 use dreamcli::completion::Shell;

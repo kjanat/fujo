@@ -3,6 +3,7 @@ use crate::Result;
 use crate::prompt::Prompt;
 use crate::resolve::Stage;
 use crate::value::NativeValue;
+#[cfg(feature = "regex")]
 use regex::Regex;
 use serde::Serialize;
 use serde_json::Value;
@@ -449,6 +450,7 @@ impl InputSchema {
                     }
                     json!(s)
                 }
+                #[cfg(feature = "url")]
                 Kind::Url => {
                     let url = url::Url::parse(raw.as_str().ok_or_else(|| {
                         CliError::validation("TYPE_MISMATCH", "Expected a URL string")
@@ -464,9 +466,14 @@ impl InputSchema {
                     }
                     json!(url.as_str())
                 }
+                #[cfg(feature = "chrono")]
                 Kind::Date => json!(parse_date(raw.as_str().ok_or_else(|| {
                     CliError::validation("TYPE_MISMATCH", "Expected an ISO date")
                 })?)?),
+                #[cfg(not(feature = "url"))]
+                Kind::Url => return Err(disabled_feature("url")),
+                #[cfg(not(feature = "chrono"))]
+                Kind::Date => return Err(disabled_feature("chrono")),
                 Kind::Duration => json!(parse_duration(&raw)?),
                 Kind::Bytes => json!(parse_bytes(&raw)?),
                 Kind::Custom => {
@@ -528,6 +535,7 @@ impl InputSchema {
             if self.max_length.is_some_and(|max| len > max) {
                 return Err(fail("Value is too long"));
             }
+            #[cfg(feature = "regex")]
             if let Some(pattern) = &self.pattern {
                 let regex = Regex::new(pattern)
                     .map_err(|_| CliError::new("INVALID_SCHEMA", "Invalid regular expression"))?;
@@ -542,6 +550,18 @@ impl InputSchema {
         Ok(())
     }
     pub(crate) fn validate_definition(&self) -> Result<()> {
+        #[cfg(not(feature = "regex"))]
+        if self.pattern.is_some() {
+            return Err(disabled_feature("regex"));
+        }
+        #[cfg(not(feature = "url"))]
+        if self.kind == Kind::Url {
+            return Err(disabled_feature("url"));
+        }
+        #[cfg(not(feature = "chrono"))]
+        if self.kind == Kind::Date {
+            return Err(disabled_feature("chrono"));
+        }
         if let Some(prompt) = &self.prompt {
             prompt.validate_definition()?;
         }
@@ -592,6 +612,7 @@ impl InputSchema {
         {
             return Err(CliError::new("INVALID_SCHEMA", "Minimum exceeds maximum"));
         }
+        #[cfg(feature = "regex")]
         if let Some(pattern) = &self.pattern {
             Regex::new(pattern)
                 .map_err(|_| CliError::new("INVALID_SCHEMA", "Invalid regular expression"))?;
@@ -656,6 +677,15 @@ pub use builder::Required;
 pub use builder::arg;
 pub use builder::flag;
 use codecs::parse_bytes;
+#[cfg(feature = "chrono")]
 use codecs::parse_date;
 use codecs::parse_duration;
 use codecs::parse_number;
+
+#[cfg(any(not(feature = "regex"), not(feature = "url"), not(feature = "chrono")))]
+fn disabled_feature(feature: &str) -> CliError {
+    CliError::new(
+        "FEATURE_DISABLED",
+        format!("Enable the '{feature}' Cargo feature for this input"),
+    )
+}

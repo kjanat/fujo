@@ -27,10 +27,8 @@ use dreamcli::schema::StdinConsume;
 use dreamcli::schema::StdinWhen;
 use dreamcli::value;
 use std::collections::BTreeMap;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::time::Duration;
 
 fn empty() -> RunOptions {
     RunOptions::default()
@@ -107,7 +105,10 @@ fn opaque_non_clone_values_can_be_borrowed() {
     assert!(app.execute(["--connection=8080"], empty()).success());
 }
 #[test]
+#[cfg(all(feature = "chrono", feature = "url"))]
 fn native_types_reach_the_handler() {
+    use std::path::PathBuf;
+    use std::time::Duration;
     let timeout = flag::duration("timeout");
     let bytes = flag::bytes("size");
     let path = flag::path("path");
@@ -572,6 +573,7 @@ fn schema_errors_reject_alias_collisions_and_arg_order() {
             .validate()
             .is_err()
     );
+    #[cfg(feature = "regex")]
     assert!(
         command("app")
             .flag(flag::string("name").pattern("["))

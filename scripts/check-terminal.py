@@ -24,14 +24,14 @@ BINARY = (
 FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 
 
-def terminal(*args):
+def terminal(*args, binary=BINARY):
     master, slave = pty.openpty()
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 30, 100, 0, 0))
     chunks = []
     started = time.monotonic()
     try:
         with subprocess.Popen(
-            [str(BINARY), *args], stdin=subprocess.DEVNULL, stdout=slave, stderr=slave
+            [str(binary), *args], stdin=subprocess.DEVNULL, stdout=slave, stderr=slave
         ) as process:
             os.close(slave)
             slave = None
@@ -83,18 +83,23 @@ def screen(text):
     return "\n".join([*lines, "".join(line)])
 
 
+def spinner_frames(chunks, label):
+    raw = b"".join(data for _, data in chunks)
+    boundaries, size = [], 0
+    for _, data in chunks:
+        size += len(data)
+        boundaries.append(size)
+    # Match complete UTF-8 glyphs rather than a byte character class.
+    pattern = re.compile(("(" + "|".join(FRAMES) + ") " + re.escape(label)).encode())
+    matches = list(pattern.finditer(raw))
+    return ({match[1] for match in matches},
+            [chunks[bisect.bisect_left(boundaries, match.end())][0] for match in matches])
+
+
 code, chunks = terminal("--steps=8", "--delay=40ms", "--verbose")
 assert code == 0, code
 raw = b"".join(data for _, data in chunks)
-boundaries, size = [], 0
-for _, data in chunks:
-    size += len(data)
-    boundaries.append(size)
-# Use alternatives for complete UTF-8 glyphs, rather than a byte character class.
-pattern = re.compile(("(" + "|".join(FRAMES) + ") Discovering inputs").encode())
-matches = list(pattern.finditer(raw))
-distinct = {match[1] for match in matches}
-times = [chunks[bisect.bisect_left(boundaries, match.end())][0] for match in matches]
+distinct, times = spinner_frames(chunks, "Discovering inputs")
 assert len(distinct) >= 3, f"only {len(distinct)} spinner frames"
 assert times[-1] - times[0] >= 0.12, "spinner frames did not arrive over time"
 progress = re.findall(rb"Building \[[= ]{20}\] +(\d+)% (\d+)/8", raw)
@@ -144,3 +149,23 @@ for mode in [[], ["--json"], ["--quiet", "--verbose"], ["--json", "--quiet"]]:
     if mode:  # JSON and quiet must suppress animation even on a real TTY.
         assert b"\x1b" not in b"".join(data for _, data in chunks)
 print("Modes: pipes, JSON, quiet, and JSON+quiet contain no animation controls")
+
+if len(sys.argv) > 2:
+    async_binary = Path(sys.argv[2])
+    code, chunks = terminal("--jobs=8", "--delay=80ms", "--profile=check", binary=async_binary)
+    assert code == 0, code
+    raw = b"".join(data for _, data in chunks)
+    distinct, times = spinner_frames(chunks, "Checking build environment")
+    assert len(distinct) >= 3, f"only {len(distinct)} async spinner frames"
+    assert times[-1] - times[0] >= 0.12, "async frames did not arrive over time"
+    progress = re.findall(rb"Building \[[= ]{20}\] +(\d+)% (\d+)/8", raw)
+    assert {int(current) for _, current in progress} == set(range(9)), progress
+    visible = screen(raw.decode())
+    assert "✓ Build complete\ncheck: 8 jobs passed\nBuild invocation finished\n" in visible, visible
+    code, chunks = terminal("--jobs=2", "--delay=0ms", "--profile=check", "--quiet", "--json", binary=async_binary)
+    assert code == 0
+    raw = b"".join(data for _, data in chunks)
+    assert b"\x1b" not in raw
+    assert json.loads(raw) == {"profile": "check", "jobs": 2, "status": "passed"}
+    print(f"Async TTY: {len(distinct)} spinner frames across {times[-1] - times[0]:.2f}s; "
+          "all progress positions and clean quiet JSON output")

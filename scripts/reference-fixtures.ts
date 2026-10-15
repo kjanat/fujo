@@ -1,10 +1,10 @@
 /** Generate behavior fixtures from the unmodified TypeScript checkout. */
 import { execFileSync } from 'node:child_process';
-import { writeFileSync } from 'node:fs';
 import { resolve as resolvePath } from 'node:path';
 import { parse } from '../../dreamcli/src/core/parse/index.ts';
 import { resolve } from '../../dreamcli/src/core/resolve/index.ts';
 import { arg, command, flag } from '../../dreamcli/src/index.ts';
+import { writeReference } from './reference-output.ts';
 
 const basic = command('basic')
 	.flag('name', flag.string().alias('n').env('NAME').config('app.name').default('default'))
@@ -147,17 +147,12 @@ for (const [schema, argv, options = {}] of cases) {
 	}
 }
 const path = resolvePath(import.meta.dir, '../crates/dreamcli/tests/fixtures/reference.json');
-writeFileSync(
+writeReference(
 	path,
-	JSON.stringify(
-		{
-			sourceCommit: execFileSync('git', ['-C', resolvePath(import.meta.dir, '../../dreamcli'), 'rev-parse', 'HEAD'], {
-				encoding: 'utf8',
-			}).trim(),
-			fixtures,
-		},
-		null,
-		2,
-	) + '\n',
+	{
+		sourceCommit: execFileSync('git', ['-C', resolvePath(import.meta.dir, '../../dreamcli'), 'rev-parse', 'HEAD'], {
+			encoding: 'utf8',
+		}).trim(),
+		fixtures,
+	},
 );
-console.log(`Wrote ${fixtures.length} reference cases to ${path}`);

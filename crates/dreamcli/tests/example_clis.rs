@@ -1,11 +1,17 @@
 //! Exercise the actual example definitions, rather than copying their CLI logic into tests.
+#![cfg(feature = "completion")]
+#[allow(dead_code)]
+#[path = "../examples/async_build.rs"]
+mod async_build;
 #[allow(dead_code)]
 #[path = "../examples/batch.rs"]
 mod batch;
 #[allow(dead_code)]
+#[cfg(feature = "url")]
 #[path = "../examples/release.rs"]
 mod release;
 #[allow(dead_code)]
+#[cfg(feature = "url")]
 #[path = "../examples/settings.rs"]
 mod settings;
 #[allow(dead_code)]
@@ -17,7 +23,9 @@ use dreamcli::RunOptions;
 use dreamcli::RunResult;
 use dreamcli::Value;
 use dreamcli::json;
+#[cfg(feature = "url")]
 use dreamcli::prompt::Answer;
+#[cfg(feature = "url")]
 use dreamcli::prompt::TestPrompter;
 use dreamcli::resolve::CheckPolicy;
 use dreamcli::runtime::NativeRuntime;
@@ -38,6 +46,7 @@ fn document(result: &RunResult) -> Value {
 }
 
 #[test]
+#[cfg(feature = "url")]
 fn release_resolves_precedence_derives_a_typed_plan_and_redacts_credentials() {
     let dir = tempfile::tempdir().unwrap();
     let artifact = dir.path().join("package.tar");
@@ -74,6 +83,7 @@ fn release_resolves_precedence_derives_a_typed_plan_and_redacts_credentials() {
 }
 
 #[test]
+#[cfg(feature = "url")]
 fn release_reports_auth_filesystem_codec_and_version_overflow_errors() {
     let dir = tempfile::tempdir().unwrap();
     let artifact = dir.path().join("package.tar");
@@ -175,6 +185,7 @@ fn batch_rejects_invalid_workers_and_target_collisions() {
 }
 
 #[test]
+#[cfg(feature = "url")]
 fn settings_resolves_nested_global_flags_stdin_config_and_redacted_provenance() {
     let mut options = RunOptions::default();
     options.resolve.config = json!({"profile":"prod","server":{"port":9000},"features":["cache"],"limits":{"requests":50}});
@@ -206,6 +217,7 @@ fn settings_resolves_nested_global_flags_stdin_config_and_redacted_provenance() 
 }
 
 #[test]
+#[cfg(feature = "url")]
 fn settings_supports_validation_schema_and_cross_input_policy() {
     let result = invoke(
         settings::app(),
@@ -243,10 +255,13 @@ fn settings_supports_validation_schema_and_cross_input_policy() {
 #[test]
 fn every_example_has_non_executing_json_help_and_four_shell_completions() {
     for app in [
+        #[cfg(feature = "url")]
         release::app(),
         batch::app(),
+        #[cfg(feature = "url")]
         settings::app(),
         terminal::app(),
+        async_build::app(),
     ] {
         let result = invoke(app.clone(), &["--help", "--json"], RunOptions::default());
         assert_eq!(document(&result)["format"], "dreamcli-rust");
@@ -257,6 +272,33 @@ fn every_example_has_non_executing_json_help_and_four_shell_completions() {
             assert!(!result.stdout.is_empty());
         }
     }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn async_build_example_uses_the_applications_executor_and_output_modes() {
+    for (modes, expected_stderr) in [(vec!["--json"], true), (vec!["--quiet", "--json"], false)] {
+        let mut args = vec!["--delay=0ms", "--jobs=2", "--profile=prod"];
+        args.extend(modes);
+        let result = async_build::app()
+            .execute_async(args, RunOptions::default())
+            .await;
+        assert_eq!(
+            document(&result),
+            json!({"profile":"prod", "jobs":2, "status":"passed"})
+        );
+        assert_eq!(!result.stderr.is_empty(), expected_stderr);
+        assert_eq!(result.activities.len(), 6);
+    }
+    let result = async_build::app()
+        .execute_async(["--delay=0ms", "--jobs=1"], RunOptions::default())
+        .await;
+    assert!(result.success());
+    assert_eq!(result.stdout, "dev: 1 jobs passed\n");
+    let result = async_build::app()
+        .execute_async(["--jobs=101"], RunOptions::default())
+        .await;
+    assert_eq!(result.error.unwrap().code, "INVALID_JOBS");
+    assert!(result.activities.is_empty());
 }
 
 #[test]

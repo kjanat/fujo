@@ -1,7 +1,9 @@
 use super::codecs::collection_schema;
 use super::codecs::typed_schema;
 use super::*;
+#[cfg(feature = "chrono")]
 use chrono::DateTime;
+#[cfg(feature = "chrono")]
 use chrono::Utc;
 use std::collections::BTreeMap;
 use std::marker::PhantomData;
@@ -351,6 +353,7 @@ impl<P, S> Input<String, P, S> {
         self.schema.declaration.max_length = Some(max);
         self
     }
+    #[cfg(feature = "regex")]
     pub fn pattern(mut self, pattern: impl Into<String>) -> Self {
         self.schema.declaration.pattern = Some(pattern.into());
         self
@@ -386,6 +389,7 @@ impl<P> Input<bool, P, FlagMarker> {
         self
     }
 }
+#[cfg(feature = "url")]
 impl<P, S> Input<url::Url, P, S> {
     pub fn protocols(mut self, protocols: impl IntoIterator<Item = impl Into<String>>) -> Self {
         self.schema.declaration.protocols = protocols.into_iter().map(Into::into).collect();
@@ -487,6 +491,7 @@ pub mod flag {
         input.schema.declaration.json_schema = crate::value::primitive_schema::<T>();
         input
     }
+    #[cfg(feature = "url")]
     pub fn url(name: &str) -> Input<url::Url> {
         Input::from_schema(typed_schema::<url::Url>(InputSchema::new(
             name,
@@ -501,6 +506,7 @@ pub mod flag {
             Surface::Flag,
         )))
     }
+    #[cfg(feature = "chrono")]
     pub fn date(name: &str) -> Input<DateTime<Utc>> {
         Input::from_schema(typed_schema::<DateTime<Utc>>(InputSchema::new(
             name,
@@ -601,12 +607,14 @@ pub mod arg {
     pub fn key_value(name: &str) -> Input<BTreeMap<String, String>, Required, ArgMarker> {
         positional(flag::key_value(name))
     }
+    #[cfg(feature = "url")]
     pub fn url(name: &str) -> Input<url::Url, Required, ArgMarker> {
         positional(flag::url(name))
     }
     pub fn path(name: &str) -> Input<std::path::PathBuf, Required, ArgMarker> {
         positional(flag::path(name))
     }
+    #[cfg(feature = "chrono")]
     pub fn date(name: &str) -> Input<DateTime<Utc>, Required, ArgMarker> {
         positional(flag::date(name))
     }

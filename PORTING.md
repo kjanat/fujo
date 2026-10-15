@@ -19,8 +19,10 @@ crate responsibilities and uses Rust types and host interfaces.
 - In-process execution with injectable environment, stdin, prompt answers,
   filesystem capabilities, and output destinations.
 
-The differential suite verifies 89 representative parse/resolution cases. Native
-integration tests cover orchestration and host behavior separately. This is a
+The differential suite verifies 89 representative parse/resolution cases and
+11 lifecycle cases, generated from the recorded TS revision. CI runs the TS
+generators live with `--check` before testing Rust. Native integration tests
+additionally cover plugin failures, suspension, cancellation, and host behavior. This is a
 behavioral compatibility baseline; it does not certify every TypeScript test case
 or identical text formatting.
 
@@ -28,7 +30,7 @@ or identical text formatting.
 
 | TypeScript surface                      | Rust surface                                                         |
 | --------------------------------------- | -------------------------------------------------------------------- |
-| Inferred object keys                    | Named typed handles, distinct `Flag` and `Arg` types                 |
+| Inferred object keys                    | Bound input bundles, or named typed handles with distinct surfaces   |
 | `undefined`                             | `Option<T>`                                                          |
 | Required/defaulted inference            | Presence marker types; `get` returns `T` or `Option<T>`              |
 | `number`                                | `f64` for compatibility, or any native integer through `parse::<T>`  |
@@ -37,13 +39,17 @@ or identical text formatting.
 | Byte size numbers                       | `u64`, rounded and range checked                                     |
 | JavaScript `URL` / `Date`               | `url::Url` / `chrono::DateTime<Utc>`                                 |
 | Standard Schema / custom callbacks      | `FromStr`, native decoder closures, and typed validators             |
-| Context object intersections            | A type-indexed native state store                                    |
+| Context object intersections            | Typed owned state transformations, or a dynamic type-indexed store   |
 | Runtime-specific Node/Bun/Deno adapters | `Runtime`, `FileSystem`, `ConfigReader`, `PromptEngine`, and `Write` |
 | `package.json` discovery                | Explicit metadata or `cargo_manifest!()`                             |
 | Process exit calls                      | Return `std::process::ExitCode` from `main`                          |
 
-Rust closures are synchronous. Async applications own their executor rather than
-having the framework select one. Writer-backed TTY spinners own a small standard
+Rust supports synchronous callbacks and native async closures. Async applications
+await an async runner using their own executor. Borrowing local futures need no
+Send bound; callback captures remain Send + Sync. Synchronous middleware cannot
+wrap an async continuation and is rejected before execution; async wrappers can
+await synchronous tails. Config, prompts, filesystem preparation, and stdio
+remain synchronous. Writer-backed TTY spinners own a small standard
 library timer thread that stops and joins on completion or `Drop`; no executor
 is required. Progress handles render on explicit updates. A shared terminal line
 keeps logs and tables readable during activities. Transient frames are excluded
@@ -51,6 +57,20 @@ from captures; logical activity events remain available in every output mode.
 Terminal prompts
 use line input; secret inputs use a native password reader rather than a JavaScript
 terminal widget implementation.
+
+`Command::inputs` binds registered inputs to borrowed handler parameters and
+owned typed state. Its `Scope` has no arbitrary handle or type-map accessor.
+Each derive explicitly transforms its previous state; tuples or structs retain
+earlier state when needed. Dynamic `ctx.get()` still looks up surface/name and
+checks the native type at runtime. Dynamic `ctx.state()` checks availability at
+runtime and replaces same-type values on insertion. These dynamic checks are
+distinct from the static guarantees of bound callbacks.
+
+TS capture omits a finish event when framework cleanup follows an action error.
+Rust's activity guard emits a failed finish on Drop. The lifecycle fixture test
+explicitly asserts this stronger native cleanup behavior. TS's unanswered
+`PROMPT_CANCEL` sentinel corresponds to Rust `Answer::Skip`, which allows default
+fallback. Rust `Answer::Cancel` represents an abort and exits 130.
 
 `array()` has an empty native default. An explicit `.optional()` clears the
 default and represents absence as `None`. This follows Rust's presence types;
@@ -81,6 +101,28 @@ Filesystem capabilities use `&Path`, preserving native path names without JSON
 or UTF-8 conversion. Checks apply to opaque and non-Unicode native defaults too.
 A scalar positional default becomes a one-element vector when converted with
 `.variadic()`, preserving the required/defaulted accessor guarantee.
+
+## Optional integrations
+
+The public crate defaults to `completion`, `terminal-prompts`, and
+`terminal-activity`. `regex`, `url`, and `chrono` are independent opt-in features;
+their built-in factories and constraints are available only when enabled. Core
+has no default integrations. Output defaults to its terminal backend when used
+on its own, and the public crate forwards that feature explicitly. All internal
+core/output dependencies disable defaults so a minimal facade build stays minimal.
+
+Disabling a backend preserves its abstraction: injected prompt engines still
+resolve values, and activity handles still record lifecycle events and clean up
+on Drop. Without `terminal-activity`, handles emit no activity text or frames and
+no timer code is compiled. Duration and byte-size parsing use decimal scanners;
+Chrono's ISO date parser does not depend on regex constraints. Config, provenance,
+middleware, validation, typed/async execution, and schema exports remain available
+in every configuration. Serde and JSON remain mandatory representation choices.
+
+`scripts/check-features.py` verifies actual normal dependency graphs and behavior
+for minimal, default, all-features, and each isolated integration. Completion
+generation alone does not depend on regex, URL, or Chrono; output alone does not
+depend on parsing, resolution, or completion.
 
 ## Schema documents and formats
 

@@ -15,17 +15,15 @@ fn main() -> ExitCode {
         .describe("Repeat count");
     let greet = Command::new("greet")
         .describe("Greet someone")
-        .arg(name.clone())
-        .flag(loud.clone())
-        .flag(times.clone())
-        .action(move |ctx| {
-            let message = format!("Hello, {}!", ctx.get(&name)?);
-            let message = if ctx.get(&loud)? {
+        .inputs((name, loud, times))
+        .action(|ctx, (name, loud, times), ()| {
+            let message = format!("Hello, {name}!");
+            let message = if *loud {
                 message.to_uppercase()
             } else {
                 message
             };
-            for _ in 0..ctx.get(&times)? {
+            for _ in 0..*times {
                 ctx.out.log(&message);
             }
             Ok(())

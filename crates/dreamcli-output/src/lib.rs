@@ -1,4 +1,8 @@
 //! Writer-based output with shared capture and RAII terminal activities.
+//!
+//! The default `terminal-activity` feature enables native TTY rendering and
+//! spinner timers. Disabling it preserves writers, captures, JSON, tables, and
+//! logical activity events, including cleanup on Drop.
 mod activity;
 pub use activity::Progress;
 pub use activity::Spinner;
@@ -54,6 +58,7 @@ struct State {
     error: Option<CliError>,
     exit_code: i32,
     events: Vec<ActivityEvent>,
+    #[cfg(feature = "terminal-activity")]
     activities: activity::Activities,
 }
 #[derive(Clone)]
@@ -79,6 +84,7 @@ impl Output {
                 error: None,
                 exit_code: 0,
                 events: vec![],
+                #[cfg(feature = "terminal-activity")]
                 activities: activity::Activities::default(),
             })),
         }
@@ -268,6 +274,7 @@ impl Output {
         }
         self.finish()
     }
+    #[cfg(feature = "terminal-activity")]
     fn activity_visible(&self) -> bool {
         self.options.tty && !self.options.json && self.options.verbosity != Verbosity::Quiet
     }
@@ -277,10 +284,14 @@ impl State {
         if text.is_empty() {
             return;
         }
+        #[cfg(feature = "terminal-activity")]
         self.clear_activity();
         self.emit(text, stderr, true);
-        self.activities.line_start = text.ends_with('\n');
-        self.render_activity();
+        #[cfg(feature = "terminal-activity")]
+        {
+            self.activities.line_start = text.ends_with('\n');
+            self.render_activity();
+        }
     }
     fn emit(&mut self, text: &str, stderr: bool, retain: bool) {
         if retain {

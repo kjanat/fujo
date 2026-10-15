@@ -30,6 +30,48 @@ dreamcli = { path = "../dreamcli-rs/crates/dreamcli" }
 Rust 1.99 or newer is required. The workspace pins its development toolchain in
 `rust-toolchain.toml`.
 
+## Cargo features
+
+The default build includes completion generation, native terminal prompts, and
+animated terminal activities. Specialized value integrations are opt-in:
+
+| Feature             | Default | Controls                                                                  |
+| ------------------- | ------- | ------------------------------------------------------------------------- |
+| `completion`        | Yes     | `dreamcli-complete`, `Cli::completions()`, and the `completion` re-export |
+| `terminal-prompts`  | Yes     | `TerminalPrompter` and its `rpassword` dependency                         |
+| `terminal-activity` | Yes     | TTY activity rendering and spinner timer threads                          |
+| `regex`             | No      | String `.pattern()` constraints and the `regex` dependency                |
+| `url`               | No      | `flag::url()`, `arg::url()`, `value::url()`, and native `url::Url` values |
+| `chrono`            | No      | `flag::date()`, `arg::date()`, `value::date()`, and native Chrono values  |
+
+For a minimal application, or one that supplies its own prompt implementation:
+
+```toml
+[dependencies]
+dreamcli = { path = "../dreamcli-rs/crates/dreamcli", default-features = false }
+```
+
+Add `features = ["url", "chrono"]` to enable those integrations, with or without
+defaults. Features are additive: another dependency enabling a feature enables
+it for the shared crate. Internal dependencies disable defaults and forward
+features explicitly. `dreamcli-core` has no default features;
+`dreamcli-output` defaults to `terminal-activity` and can disable it independently.
+
+Minimal builds retain input resolution, provenance, validation, middleware,
+typed and async execution, config, output capture, and JSON/tables. Injected
+`PromptEngine` implementations and `TestPrompter` work without `terminal-prompts`;
+only automatic native prompting is removed. Spinner/progress handles still
+record logical events and finish on Drop without `terminal-activity`, but emit
+no activity text or frames. Duration and byte-size parsing need no regex feature.
+Serde and `serde_json` remain mandatory because config, prompt interchange, and
+metadata use them. Definition and JSON Schema exports remain available.
+
+Output can also be adopted independently by a clap application or another parser:
+depend on `dreamcli-output` alone and pass the application's writers and
+`OutputOptions` to `Output::with_writers`. That crate depends on neither core
+resolution nor completion generation. Standalone `dreamcli-complete` uses core
+metadata without bringing in the specialized value dependencies.
+
 ## Define a command
 
 ```rust
@@ -44,22 +86,21 @@ fn main() -> ExitCode {
     let loud = flag::boolean("loud").alias("l");
     let times = flag::parse::<u16>("times").default(1);
 
-    let greet = Command::new("greet")
-        .arg(name.clone())
-        .flag(loud.clone())
-        .flag(times.clone())
-        .action(move |ctx| {
-            let message = format!("Hello, {}!", ctx.get(&name)?);
-            let message = if ctx.get(&loud)? {
-                message.to_uppercase()
-            } else {
-                message
-            };
-            for _ in 0..ctx.get(&times)? {
-                ctx.out.log(&message);
-            }
-            Ok(())
-        });
+    let greet =
+        Command::new("greet")
+            .inputs((name, loud, times))
+            .action(|ctx, (name, loud, times), ()| {
+                let message = format!("Hello, {name}!");
+                let message = if *loud {
+                    message.to_uppercase()
+                } else {
+                    message
+                };
+                for _ in 0..*times {
+                    ctx.out.log(&message);
+                }
+                Ok(())
+            });
 
     Cli::new("greet")
         .version(env!("CARGO_PKG_VERSION"))
@@ -69,9 +110,15 @@ fn main() -> ExitCode {
 }
 ```
 
-An input is named when its handle is created. Clone the handle to register its
-schema and move the other copy into a handler. `ctx.get()` infers the Rust type
-and presence from that handle:
+`.inputs()` registers a bundle and delivers its resolved native references to
+the callback. Required/defaulted inputs become `&T`; optional inputs become
+`Option<&T>`. The initial state is `()`. Bundles can be individual inputs or
+nested tuples, and non-Clone values are supported. The callback's `Scope` exposes
+output, metadata, and provenance; it has no arbitrary input or state lookup.
+
+The existing dynamic API remains available through `.arg()`, `.flag()`, and
+`.action(|ctx| ...)`. Clone a handle to register its schema and move the other
+copy into that handler. `ctx.get()` infers the Rust value type and presence:
 
 | Input                                      | Handler value                           |
 | ------------------------------------------ | --------------------------------------- |
@@ -93,6 +140,35 @@ required handle and `Option<&T>` for an optional handle. This also supports cust
 types that cannot be cloned. Flags and positional arguments have distinct Rust
 types, so registering an argument with `.flag()` is a compile-time error.
 
+Dynamic handles are looked up by surface and name, and state by Rust type.
+Those APIs check registration and state availability at runtime. Use `.inputs()`
+when the handler should be statically bound to its declared values and state.
+
+## Bound inputs and state
+
+Typed derives consume the previous state and return its successor. Return a
+struct or tuple containing earlier values when later stages need both:
+
+```rust
+use dreamcli::{Command, arg, flag};
+
+let build = Command::new("build")
+    .inputs((arg::path("root"), flag::parse::<u16>("jobs").default(4)))
+    .derive(|_, (root, jobs), ()| Ok((root.clone(), *jobs)))
+    .action(|ctx, _, (root, jobs)| {
+        ctx.out.log(format!("{}: {jobs} jobs", root.display()));
+        Ok(())
+    });
+```
+
+The compiler checks the input bundle's shape, native types, and the state type
+produced by the preceding derivation. State is owned per invocation and can
+contain local values such as `Rc`; it does not need Serde or `Clone`. To share
+globals, register a flag bundle with `Cli::inputs(globals.clone())` and include
+it in each leaf's `.inputs((globals, local_inputs))` bundle. This also works for
+nested commands and propagated flags. Duplicate names and cross-input policies
+remain schema/runtime validation concerns.
+
 ## Native values
 
 `flag::parse::<T>()` and `arg::parse::<T>()` accept any `FromStr` type whose value
@@ -107,15 +183,16 @@ such a parser, including help and completions.
 | `number`                     | `f64`, with `.integer()`, `.min()`, and `.max()`                      |
 | `boolean`                    | `bool`, with `.negatable()` on flags                                  |
 | `path`                       | `PathBuf`                                                             |
-| `url`                        | `url::Url`                                                            |
-| `date`                       | `chrono::DateTime<Utc>`                                               |
+| `url`                        | `url::Url` (feature `url`)                                            |
+| `date`                       | `chrono::DateTime<Utc>` (feature `chrono`)                            |
 | `duration`                   | `std::time::Duration`; accepts `1h30m`, `250ms`, or bare milliseconds |
 | `bytes`                      | `u64`; `1kb` means 1024 bytes                                         |
 | `count`                      | `u64`                                                                 |
 | `key_value` / `key_value_of` | `BTreeMap<String, T>`                                                 |
 | `array`                      | `Vec<T>`                                                              |
 
-Strings support non-empty, length, and Rust regex constraints. `.validate()` adds
+Strings support non-empty and length constraints; feature `regex` adds Rust
+regex constraints through `.pattern()`. `.validate()` adds
 a validator over the actual Rust value. `flag::custom()` and `arg::custom()` accept
 an explicit decoder for applications that need structured config or prompt
 values. `.sensitive()` hides values from framework diagnostics, debug output,
@@ -193,8 +270,8 @@ Command dispatch skips flag operands, so a value matching a command name is
 still a value.
 
 Middleware receives `Next`, which can be consumed once with `next.run(ctx)` or
-dropped to stop the chain. `.derive()` computes native application state from
-resolved inputs; `.state::<T>()` retrieves it by Rust type identity.
+dropped to stop the chain. In the dynamic API, `.derive()` computes native state
+from resolved inputs and `.state::<T>()` retrieves it by Rust type identity.
 
 ```rust
 use dreamcli::{Command, CliError};
@@ -219,8 +296,45 @@ let command = Command::new("deploy")
 ```
 
 Plugin hooks are methods on the `Plugin` trait: before parsing, before execution,
-after execution, and on error. Handlers and host I/O are synchronous. Applications
-using async libraries choose and drive their own runtime inside an action.
+after execution, and on error.
+
+## Async execution
+
+Use native async closures with `.action_async()`, `.derive_async()`, and
+`.middleware_async()`. Both dynamic and bound handlers support async execution:
+
+```rust
+use dreamcli::{Cli, Command, flag};
+
+let command = Command::new("demo")
+    .inputs(flag::string("name").default("world".into()))
+    .derive_async(async |_, name, ()| Ok(name.to_uppercase()))
+    .action_async(async |ctx, _, greeting| {
+        ctx.out.log(greeting);
+        Ok(())
+    });
+let app = Cli::new("demo").default(command);
+// Within your application's async entrypoint:
+// let result = app.execute_async(Vec::<String>::new(), Default::default()).await;
+// Return app.run_async().await from an async main for native stdio.
+```
+
+`execute_async`, `run_with_async`, `run_os_with_async`, and `run_async` share
+preparation and result handling with their synchronous counterparts. The library
+selects no executor. Futures are local and may borrow native inputs or hold
+non-Send state across suspension; await them directly or use a local task set.
+They cannot be passed to a Send-only spawn API. Callback captures remain
+`Send + Sync + 'static`. Prompts, config, filesystem preparation, and stdio remain
+synchronous. The [async build example](crates/dreamcli/examples/async_build.rs)
+uses Tokio as an application dependency; Tokio is not a library dependency.
+
+Async middleware consumes `AsyncNext` and awaits `next.run(ctx)`. It can wrap
+sync actions, sync derives, or a fully synchronous middleware tail. A sync
+middleware cannot wrap async work; use `middleware_async` for that wrapper.
+Such combinations fail with `ASYNC_MIDDLEWARE_REQUIRED` before execute hooks or
+middleware run. Sync runners reject async work with `ASYNC_REQUIRED`; help,
+version, and completions remain available synchronously. Dropping a suspended
+invocation drops its state and activity guards.
 
 ## Output, help, and completion
 
