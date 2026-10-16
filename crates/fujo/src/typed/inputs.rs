@@ -6,7 +6,7 @@ use crate::schema::Input;
 use crate::schema::InputSchema;
 use crate::schema::Presence;
 
-mod sealed {
+pub(crate) mod sealed {
     pub trait Sealed {}
 }
 
@@ -77,3 +77,121 @@ tuple!(A:0,B:1,C:2,D:3,E:4,F:5,G:6,H:7,I:8);
 tuple!(A:0,B:1,C:2,D:3,E:4,F:5,G:6,H:7,I:8,J:9);
 tuple!(A:0,B:1,C:2,D:3,E:4,F:5,G:6,H:7,I:8,J:9,K:10);
 tuple!(A:0,B:1,C:2,D:3,E:4,F:5,G:6,H:7,I:8,J:9,K:10,L:11);
+
+#[doc(hidden)]
+pub mod __private {
+    pub use super::sealed::Sealed;
+}
+
+/// Declare a named input bundle. The first struct holds input handles and is
+/// `Clone`; the second receives their resolved references in typed callbacks.
+/// Each field is any [`InputSet`]: an input handle, a tuple, or another
+/// declared bundle.
+///
+/// ```
+/// use fujo::{Arg, Cli, Command, Flag, Required, arg, flag};
+/// use std::path::PathBuf;
+/// fujo::inputs! {
+///     struct Build => BuildValues {
+///         root: Arg<PathBuf>,
+///         jobs: Flag<u16, Required>,
+///         label: Flag<String>,
+///     }
+/// }
+/// let command = Command::new("build")
+///     .inputs(Build {
+///         root: arg::path("root"),
+///         jobs: flag::parse("jobs").default(4),
+///         label: flag::string("label"),
+///     })
+///     .action(|ctx, BuildValues { root, jobs, label }, ()| {
+///         let label = label.map_or("build", String::as_str);
+///         ctx.out.log(format!("{label}: {} with {jobs} jobs", root.display()));
+///         Ok(())
+///     });
+/// let result = Cli::new("build").default(command).execute(["src"], Default::default());
+/// assert_eq!(result.stdout, "build: src with 4 jobs\n");
+/// ```
+///
+/// Field types are checked against the handles supplied at construction:
+/// ```compile_fail
+/// use fujo::{Arg, flag};
+/// fujo::inputs! { struct Demo => DemoValues { name: Arg<String> } }
+/// let demo = Demo { name: flag::string("name") };
+/// ```
+#[macro_export]
+macro_rules! inputs {
+    (
+        $(#[$meta:meta])* $vis:vis struct $name:ident => $values:ident {
+            $($(#[$field_meta:meta])* $field_vis:vis $field:ident : $ty:ty),+ $(,)?
+        }
+    ) => {
+        $(#[$meta])*
+        $vis struct $name {
+            $($(#[$field_meta])* $field_vis $field: $ty,)+
+        }
+        impl Clone for $name {
+            fn clone(&self) -> Self {
+                Self { $($field: self.$field.clone(),)+ }
+            }
+        }
+        #[derive(Clone, Copy)]
+        $vis struct $values<'a> {
+            $($field_vis $field: <$ty as $crate::InputSet>::Values<'a>,)+
+        }
+        impl $crate::typed::__private::Sealed for $name {}
+        impl $crate::InputSet for $name {
+            type Values<'a> = $values<'a>;
+            fn visit(&self, visitor: &mut dyn FnMut($crate::schema::InputSchema)) {
+                $($crate::InputSet::visit(&self.$field, visitor);)+
+            }
+            fn read<'a>(&self, resolved: &'a $crate::Resolved) -> $crate::Result<Self::Values<'a>> {
+                Ok($values {
+                    $($field: $crate::InputSet::read(&self.$field, resolved)?,)+
+                })
+            }
+        }
+    };
+}
+
+/// Declare a named bundle containing only flags, accepted by `Cli::inputs` as
+/// shared globals and by `Command::inputs` as a nested field.
+///
+/// ```
+/// use fujo::{Cli, Command, Flag, Required, flag};
+/// fujo::flags! {
+///     struct Globals => GlobalValues {
+///         profile: Flag<String, Required>,
+///     }
+/// }
+/// let globals = Globals { profile: flag::string("profile").default("dev".into()) };
+/// let command = Command::new("show")
+///     .inputs(globals.clone())
+///     .action(|ctx, GlobalValues { profile }, ()| {
+///         ctx.out.log(profile);
+///         Ok(())
+///     });
+/// let app = Cli::new("demo").inputs(globals).command(command);
+/// assert_eq!(app.execute(["--profile=prod", "show"], Default::default()).stdout, "prod\n");
+/// ```
+///
+/// A positional argument is rejected:
+/// ```compile_fail
+/// use fujo::Arg;
+/// fujo::flags! { struct Globals => GlobalValues { name: Arg<String> } }
+/// ```
+#[macro_export]
+macro_rules! flags {
+    (
+        $(#[$meta:meta])* $vis:vis struct $name:ident => $values:ident {
+            $($(#[$field_meta:meta])* $field_vis:vis $field:ident : $ty:ty),+ $(,)?
+        }
+    ) => {
+        $crate::inputs! {
+            $(#[$meta])* $vis struct $name => $values {
+                $($(#[$field_meta])* $field_vis $field: $ty,)+
+            }
+        }
+        impl $crate::typed::FlagSet for $name where $($ty: $crate::typed::FlagSet),+ {}
+    };
+}

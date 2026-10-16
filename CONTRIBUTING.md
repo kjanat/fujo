@@ -31,6 +31,8 @@ updates do not require editing workflow versions.
 ## Try the examples
 
 ```sh
+cargo run -p fujo --example manifest -- build . --out manifest.json
+cargo run -p fujo --example manifest -- verify . --manifest manifest.json --json
 cargo run -p fujo --example async_build
 cargo run -p fujo --example async_build -- --delay=0ms --jobs=2 --json
 cargo run -p fujo --example terminal
@@ -45,6 +47,7 @@ cargo run -p fujo --features url --example settings -- config show --json
 cargo test -p fujo --features url --test example_clis
 ```
 
+The manifest example writes the file named by `--out` and nothing else.
 The deploy example uses `DEPLOY_REGION`, `DEPLOY_TOKEN`, and optional JSON config.
 It demonstrates native enums, global flags, typed derived state, and nested
 commands. It simulates deployment and does not contact an external service.

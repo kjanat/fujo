@@ -7,11 +7,14 @@ use crate::schema::ArgMarker;
 use crate::schema::FlagMarker;
 use crate::schema::Input;
 use crate::schema::Presence;
+use crate::typed::StageInfo;
+use crate::typed::StageKind;
 pub use fujo_core::command::CommandSchema;
 pub use fujo_core::command::Example;
 use serde::Serialize;
 use std::any::Any;
 use std::any::TypeId;
+use std::any::type_name_of_val;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -68,6 +71,14 @@ impl Context {
             })
     }
 }
+fn async_step(
+    middleware: impl for<'a> AsyncFn(&'a mut Context, AsyncNext<'a>) -> Result<()>
+    + Send
+    + Sync
+    + 'static,
+) -> Step {
+    Step::Async(Arc::new(middleware))
+}
 pub(crate) type SyncAction = Arc<dyn Fn(&mut Context) -> Result<()> + Send + Sync>;
 pub(crate) type Middleware =
     Arc<dyn for<'a> Fn(&mut Context, Next<'a>) -> Result<()> + Send + Sync>;
@@ -112,6 +123,7 @@ pub struct Command {
     pub(crate) schema: CommandSchema,
     pub(crate) children: Vec<Command>,
     pub(crate) steps: Vec<Step>,
+    pub(crate) stages: Vec<StageInfo>,
     pub(crate) action: Option<Action>,
     pub(crate) interactive: Option<crate::resolve::Interactive>,
 }
@@ -136,6 +148,7 @@ pub fn command(name: &str) -> Command {
         },
         children: vec![],
         steps: vec![],
+        stages: vec![],
         action: None,
         interactive: None,
     }
@@ -149,6 +162,10 @@ impl Command {
     }
     pub fn schema(&self) -> &CommandSchema {
         &self.schema
+    }
+    /// Dynamic steps and typed stages in execution order; the action is not listed.
+    pub fn stages(&self) -> &[StageInfo] {
+        &self.stages
     }
     pub fn describe(mut self, description: impl Into<String>) -> Self {
         self.schema.description = description.into();
@@ -217,6 +234,11 @@ impl Command {
         mut self,
         middleware: impl for<'a> Fn(&mut Context, Next<'a>) -> Result<()> + Send + Sync + 'static,
     ) -> Self {
+        self.stages.push(StageInfo::new(
+            StageKind::Middleware,
+            type_name_of_val(&middleware),
+            false,
+        ));
         self.steps.push(Step::Middleware(Arc::new(middleware)));
         self
     }
@@ -228,6 +250,11 @@ impl Command {
         + Sync
         + 'static,
     ) -> Self {
+        self.stages.push(StageInfo::new(
+            StageKind::Middleware,
+            type_name_of_val(&middleware),
+            true,
+        ));
         self.steps.push(Step::Async(Arc::new(middleware)));
         self
     }
@@ -235,6 +262,11 @@ impl Command {
         mut self,
         derive: impl Fn(&Context) -> Result<T> + Send + Sync + 'static,
     ) -> Self {
+        self.stages.push(StageInfo::new(
+            StageKind::Derive,
+            type_name_of_val(&derive),
+            false,
+        ));
         self.steps.push(Step::Derive(Arc::new(move |ctx| {
             let value = derive(ctx)?;
             ctx.insert(value);
@@ -243,14 +275,20 @@ impl Command {
         self
     }
     pub fn derive_async<T: Send + Sync + 'static>(
-        self,
+        mut self,
         derive: impl for<'a> AsyncFn(&'a Context) -> Result<T> + Send + Sync + 'static,
     ) -> Self {
-        self.middleware_async(async move |ctx, next| {
+        self.stages.push(StageInfo::new(
+            StageKind::Derive,
+            type_name_of_val(&derive),
+            true,
+        ));
+        self.steps.push(async_step(async move |ctx, next| {
             let value = derive(&*ctx).await?;
             ctx.insert(value);
             next.run(ctx).await
-        })
+        }));
+        self
     }
     pub fn validate(&self) -> Result<()> {
         self.schema.validate()

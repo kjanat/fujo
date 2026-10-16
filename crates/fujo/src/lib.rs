@@ -84,9 +84,18 @@ pub mod runtime;
 pub use fujo_core::schema;
 pub mod testkit;
 pub mod typed;
+pub use typed::AsyncDerive;
+pub use typed::AsyncMiddleware;
+pub use typed::Chain;
+pub use typed::Derive;
 pub use typed::InputSet;
+pub use typed::Middleware;
+pub use typed::Pipeline;
 pub use typed::Scope;
+pub use typed::StageInfo;
+pub use typed::StageKind;
 pub use typed::TypedCommand;
+pub use typed::pipeline;
 
 pub use cli::Builtins;
 pub use cli::Cli;

@@ -7,6 +7,9 @@ mod async_build;
 #[path = "../examples/batch.rs"]
 mod batch;
 #[allow(dead_code)]
+#[path = "../examples/manifest.rs"]
+mod manifest;
+#[allow(dead_code)]
 #[cfg(feature = "url")]
 #[path = "../examples/release.rs"]
 mod release;
@@ -262,6 +265,7 @@ fn every_example_has_non_executing_json_help_and_four_shell_completions() {
         settings::app(),
         terminal::app(),
         async_build::app(),
+        manifest::app(),
     ] {
         let result = invoke(app.clone(), &["--help", "--json"], RunOptions::default());
         assert_eq!(document(&result)["format"], "fujo");
@@ -366,4 +370,149 @@ fn terminal_demo_rejects_invalid_native_limits_before_work() {
         assert_eq!(result.error.unwrap().code, code);
         assert!(result.activities.is_empty());
     }
+}
+
+fn tree(root: &std::path::Path, files: &[(&str, &str)]) {
+    for (path, content) in files {
+        let path = root.join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, content).unwrap();
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn manifest_build_records_fingerprints_and_verify_reports_drift() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("tree");
+    tree(
+        &root,
+        &[
+            ("hello.txt", "hello"),
+            ("sub/b.txt", "b"),
+            (".git/HEAD", "ref"),
+            ("target/out", "x"),
+        ],
+    );
+    let out = dir.path().join("manifest.json");
+    let (tree_root, root, out) = (root.clone(), root.to_str().unwrap(), out.to_str().unwrap());
+    let result = manifest::app()
+        .execute_async(["build", root, "--out", out, "--json"], checked())
+        .await;
+    let summary = document(&result);
+    assert_eq!(summary["files"], 2);
+    assert_eq!(summary["bytes"], 6);
+    assert_eq!(result.activities.len(), 6);
+    assert!(result.stderr.contains("Processed 2 files"));
+    let written: Value = serde_json::from_slice(&std::fs::read(out).unwrap()).unwrap();
+    assert_eq!(
+        written["files"]["hello.txt"],
+        json!({"size": 5, "digest": "a430d84680aabd0b"})
+    );
+    assert_eq!(written["files"]["sub/b.txt"]["size"], 1);
+    assert_eq!(written["files"].as_object().unwrap().len(), 2);
+
+    let result = manifest::app()
+        .execute_async(["verify", root, "--manifest", out, "--json"], checked())
+        .await;
+    assert_eq!(
+        document(&result),
+        json!({"changed": [], "missing": [], "added": [], "unchanged": 2})
+    );
+    let result = manifest::app()
+        .execute_async(["verify", root, "--manifest", out], checked())
+        .await;
+    assert!(result.success(), "{:?}", result.error);
+    assert_eq!(result.stdout, "2 files match the manifest\n");
+    assert!(
+        result
+            .stderr
+            .contains("0 changed, 0 missing, 0 added, 2 unchanged")
+    );
+
+    tree(&tree_root, &[("hello.txt", "changed"), ("new.txt", "n")]);
+    std::fs::remove_file(tree_root.join("sub/b.txt")).unwrap();
+    let result = manifest::app()
+        .execute_async(["verify", root, "--manifest", out, "--json"], checked())
+        .await;
+    assert_eq!(result.exit_code, 1);
+    assert!(result.error.is_none());
+    let report: Value = serde_json::from_str(&result.stdout).unwrap();
+    assert_eq!(
+        report,
+        json!({"changed": ["hello.txt"], "missing": ["sub/b.txt"], "added": ["new.txt"], "unchanged": 0})
+    );
+    let result = manifest::app()
+        .execute_async(["verify", root, "--manifest", out], checked())
+        .await;
+    assert_eq!(result.exit_code, 1);
+    assert!(result.stdout.contains("hello.txt"));
+    assert!(result.stdout.contains("missing"));
+    assert!(!result.stdout.contains('\x1b'));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn manifest_resolves_globals_from_cli_env_and_config_and_guards_overwrites() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("tree");
+    tree(
+        &root,
+        &[("a.txt", "a"), ("skip/b.txt", "b"), ("c.txt", "c")],
+    );
+    let out = dir.path().join("manifest.json");
+    let (root, out) = (root.to_str().unwrap(), out.to_str().unwrap());
+    let build = async |extra: &[&str], options: RunOptions| {
+        let mut args = vec!["build", root, "--out", out, "--json"];
+        args.extend_from_slice(extra);
+        manifest::app().execute_async(args, options).await
+    };
+    assert_eq!(document(&build(&["--jobs=1"], checked()).await)["files"], 3);
+    let repeated = build(&[], checked()).await;
+    assert_eq!(repeated.error.unwrap().code, "MANIFEST_EXISTS");
+    assert_eq!(
+        document(&build(&["--force", "-j8"], checked()).await)["files"],
+        3
+    );
+
+    let mut options = checked();
+    options
+        .resolve
+        .env
+        .insert("MANIFEST_JOBS".into(), "65".into());
+    let result = build(&["--force"], options).await;
+    assert_eq!(result.error.unwrap().code, "INVALID_JOBS");
+    assert!(result.activities.is_empty());
+    assert_eq!(
+        build(&["--force", "--jobs=0"], checked())
+            .await
+            .error
+            .unwrap()
+            .code,
+        "INVALID_VALUE"
+    );
+
+    let mut options = checked();
+    options.resolve.config = json!({"jobs": 2, "ignore": ["skip"]});
+    options
+        .resolve
+        .env
+        .insert("MANIFEST_IGNORE".into(), "c.txt".into());
+    let result = build(&["--force"], options).await;
+    assert_eq!(document(&result)["files"], 2);
+    assert_eq!(
+        result.resolved.as_ref().unwrap().sources.flags["jobs"].stage,
+        fujo::Stage::Config
+    );
+    assert_eq!(
+        result.resolved.as_ref().unwrap().sources.flags["ignore"].stage,
+        fujo::Stage::Env
+    );
+    let written: Value = serde_json::from_slice(&std::fs::read(out).unwrap()).unwrap();
+    assert_eq!(
+        written["files"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .collect::<Vec<_>>(),
+        ["a.txt", "skip/b.txt"]
+    );
 }

@@ -57,6 +57,13 @@ pub(crate) fn async_required() -> CliError {
     )
     .suggest("Use execute_async, run_with_async, or run_async and await the result")
 }
+pub(crate) fn async_middleware_required() -> CliError {
+    CliError::new(
+        "ASYNC_MIDDLEWARE_REQUIRED",
+        "Synchronous middleware cannot wrap asynchronous work",
+    )
+    .suggest("Use middleware_async(async |ctx, next| { next.run(ctx).await })")
+}
 pub(crate) fn requires_async(steps: &[Step], action: Option<&Action>) -> bool {
     matches!(action, Some(Action::Async(_))) || steps.iter().any(|s| matches!(s, Step::Async(_)))
 }
@@ -65,13 +72,7 @@ pub(crate) fn validate_async(steps: &[Step], action: Option<&Action>) -> Result<
     for step in steps.iter().rev() {
         match step {
             Step::Async(_) => asynchronous = true,
-            Step::Middleware(_) if asynchronous => {
-                return Err(CliError::new(
-                    "ASYNC_MIDDLEWARE_REQUIRED",
-                    "Synchronous middleware cannot wrap asynchronous work",
-                )
-                .suggest("Use middleware_async(async |ctx, next| { next.run(ctx).await })"));
-            }
+            Step::Middleware(_) if asynchronous => return Err(async_middleware_required()),
             _ => {}
         }
     }

@@ -3,7 +3,8 @@
 Fujo is a native Rust port of DreamCLI. The
 [DreamCLI TypeScript project](https://github.com/kjanat/dreamcli) in `../dreamcli`
 is the behavior reference, initially inspected at commit
-[`f87c1672e10b27c066524a0715bfea0f714dd5bc`](https://github.com/kjanat/dreamcli/commit/f87c1672e10b27c066524a0715bfea0f714dd5bc). The Rust implementation is organized by
+[`f87c1672e10b27c066524a0715bfea0f714dd5bc`](https://github.com/kjanat/dreamcli/commit/f87c1672e10b27c066524a0715bfea0f714dd5bc).
+The Rust implementation is organized by
 crate responsibilities and uses Rust types and host interfaces.
 
 ## Preserved behavior
@@ -30,21 +31,21 @@ or identical text formatting.
 
 ## Rust API choices
 
-| TypeScript surface                      | Rust surface                                                         |
-| --------------------------------------- | -------------------------------------------------------------------- |
-| Inferred object keys                    | Bound input bundles, or named typed handles with distinct surfaces   |
-| `undefined`                             | `Option<T>`                                                          |
-| Required/defaulted inference            | Presence marker types; `get` returns `T` or `Option<T>`              |
-| `number`                                | `f64` for compatibility, or any native integer through `parse::<T>`  |
-| String paths                            | `PathBuf`                                                            |
-| Millisecond numbers                     | `std::time::Duration`                                                |
-| Byte size numbers                       | `u64`, rounded and range checked                                     |
-| JavaScript `URL` / `Date`               | `url::Url` / `chrono::DateTime<Utc>`                                 |
-| Standard Schema / custom callbacks      | `FromStr`, native decoder closures, and typed validators             |
-| Context object intersections            | Typed owned state transformations, or a dynamic type-indexed store   |
-| Runtime-specific Node/Bun/Deno adapters | `Runtime`, `FileSystem`, `ConfigReader`, `PromptEngine`, and `Write` |
-| `package.json` discovery                | Explicit metadata or `cargo_manifest!()`                             |
-| Process exit calls                      | Return `std::process::ExitCode` from `main`                          |
+| TypeScript surface                      | Rust surface                                                             |
+| --------------------------------------- | ------------------------------------------------------------------------ |
+| Inferred object keys                    | Bound tuples, `inputs!` structs, or named handles with distinct surfaces |
+| `undefined`                             | `Option<T>`                                                              |
+| Required/defaulted inference            | Presence marker types; `get` returns `T` or `Option<T>`                  |
+| `number`                                | `f64` for compatibility, or any native integer through `parse::<T>`      |
+| String paths                            | `PathBuf`                                                                |
+| Millisecond numbers                     | `std::time::Duration`                                                    |
+| Byte size numbers                       | `u64`, rounded and range checked                                         |
+| JavaScript `URL` / `Date`               | `url::Url` / `chrono::DateTime<Utc>`                                     |
+| Standard Schema / custom callbacks      | `FromStr`, native decoder closures, and typed validators                 |
+| Context object intersections            | Typed owned state transformations, or a dynamic type-indexed store       |
+| Runtime-specific Node/Bun/Deno adapters | `Runtime`, `FileSystem`, `ConfigReader`, `PromptEngine`, and `Write`     |
+| `package.json` discovery                | Explicit metadata or `cargo_manifest!()`                                 |
+| Process exit calls                      | Return `std::process::ExitCode` from `main`                              |
 
 Rust supports synchronous callbacks and native async closures. Async applications
 await an async runner using their own executor. Borrowing local futures need no
@@ -63,7 +64,12 @@ terminal widget implementation.
 `Command::inputs` binds registered inputs to borrowed handler parameters and
 owned typed state. Its `Scope` has no arbitrary handle or type-map accessor.
 Each derive explicitly transforms its previous state; tuples or structs retain
-earlier state when needed. Dynamic `ctx.get()` still looks up surface/name and
+earlier state when needed. `inputs!` and `flags!` declare named bundles with the
+same registration step. A typed middleware receives the state at its position
+and a continuation for the later stages; a synchronous one excludes later
+asynchronous stages at compile time. Stages are values: types implementing
+`Middleware` or `Derive` plug into any command, and a `pipeline` built once is
+inherited by several commands. Dynamic `ctx.get()` still looks up surface/name and
 checks the native type at runtime. Dynamic `ctx.state()` checks availability at
 runtime and replaces same-type values on insertion. These dynamic checks are
 distinct from the static guarantees of bound callbacks.

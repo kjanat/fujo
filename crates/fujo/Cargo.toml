@@ -38,6 +38,10 @@ required-features = ["completion", "terminal-activity"]
 name              = "async_build"
 required-features = ["completion"]
 
+[[example]]
+name              = "manifest"
+required-features = ["completion"]
+
 [dependencies]
 fujo-complete           = { workspace = true, optional = true }
 fujo-core.workspace     = true
@@ -49,7 +53,7 @@ unicode-width.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
-tokio              = { version = "1", features = ["macros", "rt", "time"] }
+tokio              = { version = "1", features = ["macros", "rt", "sync", "time"] }
 
 [features]
 default           = ["completion", "terminal-activity", "terminal-prompts"]
