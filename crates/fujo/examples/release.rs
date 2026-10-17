@@ -1,4 +1,3 @@
-//! A release planner: validates inputs and credentials, emits a plan, and performs no upload.
 use fujo::Cli;
 use fujo::CliError;
 use fujo::Command;
@@ -15,7 +14,6 @@ use std::fmt;
 use std::path::PathBuf;
 use std::str::FromStr;
 
-/// All CLI declarations and orchestration are kept together here.
 pub fn app() -> Cli {
     let artifact = arg::path("artifact")
         .path_checks(PathChecks::file())
@@ -113,7 +111,7 @@ pub fn app() -> Cli {
                 ctx.out.json(plan)
             } else {
                 ctx.out.log(format!(
-                    "{} → {}: {}",
+                    "{} -> {}: {}",
                     plan.current,
                     plan.next,
                     plan.artifact.display()
@@ -212,6 +210,6 @@ struct ReleasePlan {
     publish: bool,
 }
 
-fn main() -> std::process::ExitCode {
+pub fn main() -> std::process::ExitCode {
     app().run()
 }

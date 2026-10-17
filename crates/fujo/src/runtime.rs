@@ -25,6 +25,16 @@ pub struct RunOptions {
     pub help: crate::help::HelpOptions,
     pub channel: Option<Output>,
 }
+impl std::fmt::Debug for RunOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RunOptions")
+            .field("output", &self.output)
+            .field("parse", &self.parse)
+            .field("help", &self.help)
+            .field("channel", &self.channel)
+            .finish_non_exhaustive()
+    }
+}
 #[derive(Debug, Clone)]
 pub struct RunResult {
     pub exit_code: i32,
@@ -40,21 +50,22 @@ impl RunResult {
         self.exit_code == 0 && self.error.is_none()
     }
     pub fn exit_code(&self) -> ExitCode {
-        ExitCode::from(self.exit_code.clamp(0, 255) as u8)
+        ExitCode::from(u8::try_from(self.exit_code).unwrap_or(1))
     }
     pub fn into_result(self) -> Result<Self> {
-        if let Some(error) = self.error.clone() {
-            Err(error)
-        } else {
-            Ok(self)
+        match self.error {
+            Some(error) => Err(error),
+            None => Ok(self),
         }
     }
 }
-/// OS boundary. Tests can implement this without modifying environment or stdio.
 pub trait Runtime: Send + Sync {
     fn env(&self, name: &str) -> Option<String>;
     fn stdin_is_tty(&self) -> bool;
     fn stdout_is_tty(&self) -> bool;
+    fn stderr_is_tty(&self) -> bool {
+        self.stdout_is_tty()
+    }
     fn read_stdin(&self) -> Result<String>;
     fn cwd(&self) -> Result<PathBuf>;
     fn reader(&self) -> &dyn ConfigReader;
@@ -110,6 +121,9 @@ impl Runtime for NativeRuntime {
     }
     fn stdout_is_tty(&self) -> bool {
         io::stdout().is_terminal()
+    }
+    fn stderr_is_tty(&self) -> bool {
+        io::stderr().is_terminal()
     }
     fn read_stdin(&self) -> Result<String> {
         let mut input = String::new();

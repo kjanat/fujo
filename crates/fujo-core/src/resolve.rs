@@ -66,14 +66,12 @@ pub struct InputSources {
     pub args: BTreeMap<String, Provenance>,
 }
 
-/// Filesystem checks are explicit capabilities, shared by native and test adapters.
 pub trait FileSystem: Send + Sync {
     fn stat(&self, path: &Path) -> Result<Option<PathType>>;
     fn mkdir(&self, path: &Path) -> Result<()>;
 }
 pub type Interactive =
     Arc<dyn Fn(&Resolved) -> Result<BTreeMap<String, Option<crate::prompt::Prompt>>> + Send + Sync>;
-/// Available checks run by default; skipped checks remain observable.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum CheckPolicy {
     #[default]
@@ -133,7 +131,6 @@ impl Resolved {
     ) -> Result<P::Ref<'_>> {
         P::read_ref(self.peek(input)?, input.name())
     }
-    /// Read a possibly unresolved handle, useful inside conditional prompt selection.
     pub fn peek<T: 'static, P, S>(&self, input: &Input<T, P, S>) -> Result<Option<&T>> {
         match input.schema().surface {
             Surface::Flag => &self.flags,
@@ -143,7 +140,6 @@ impl Resolved {
         .map(|v| v.downcast_ref())
         .transpose()
     }
-    /// Only values with a JSON representation are exported. Native custom values remain opaque.
     pub fn json(&self) -> Value {
         let surface = |values: &BTreeMap<String, NativeValue>| {
             Value::Object(
@@ -171,7 +167,6 @@ pub fn resolve(
     let mut resolved = Resolved::default();
     let mut errors = vec![];
     let mut hard_errors = std::collections::BTreeSet::new();
-    // Resolve explicit sources for the whole command before deciding which prompts to ask.
     for input in schema.flags.iter().chain(&schema.args) {
         let occurrences = match input.surface {
             Surface::Flag => &parsed.flag_occurrences,
@@ -299,7 +294,7 @@ fn resolve_input(
             source.trigger = Some("dash".into());
         }
         if !expanded.is_empty() || input.collection() {
-            selected = Some((project(input, &expanded)?, source));
+            selected = Some((project(input, &expanded, Stage::Cli)?, source));
         }
     }
     if selected.is_none()
@@ -311,7 +306,10 @@ fn resolve_input(
             trigger: Some("fallback".into()),
             ..Provenance::at(Stage::Stdin)
         };
-        selected = Some((project(input, &stdin_occurrences(input, buffer)?)?, source));
+        selected = Some((
+            project(input, &stdin_occurrences(input, buffer)?, Stage::Stdin)?,
+            source,
+        ));
     }
     if selected.is_none() {
         for env in &input.env_vars {
@@ -409,9 +407,6 @@ fn resolve_input(
         }
         (native, source)
     } else if let Some(default) = &input.native_default {
-        if let Some(value) = input.default_validation_json(default) {
-            validate_default(input, &value)?;
-        }
         if let Some(path) = default.inner.downcast_ref::<PathBuf>() {
             validate_path_values(input, &[path.as_path()], options, skipped)?;
         } else if let Some(paths) = default.inner.downcast_ref::<Vec<PathBuf>>() {
@@ -459,12 +454,6 @@ pub(crate) fn validate_default(input: &InputSchema, value: &Value) -> Result<()>
             validate_default(input.element.as_deref().expect("entry element"), value)?;
         }
         input.validate_scalar(value)
-    } else if input.kind == Kind::Custom && !value.is_string() {
-        let mut native_shape = input.clone();
-        native_shape.declaration.enum_values.clear();
-        native_shape
-            .decode_scalar(value.clone(), Stage::Default)
-            .map(|_| ())
     } else {
         input
             .decode_scalar(value.clone(), Stage::Default)
@@ -493,7 +482,7 @@ pub fn strip_terminator(text: &str) -> &str {
         .or_else(|| text.strip_suffix('\r'))
         .unwrap_or(text)
 }
-pub fn config_value<'a>(config: &'a Value, path: &str) -> Option<&'a Value> {
+pub(crate) fn config_value<'a>(config: &'a Value, path: &str) -> Option<&'a Value> {
     path.split('.')
         .try_fold(config, |value, key| value.as_object()?.get(key))
 }
@@ -504,36 +493,34 @@ fn coerce(input: &InputSchema, value: Value, split: &Split, source: Stage) -> Re
     let values = match &value {
         Value::Array(values) if input.kind != Kind::KeyValue => values.clone(),
         Value::Array(values) => {
-            let element = input.element.as_deref().expect("entry element");
             return project(
                 input,
                 &values
                     .iter()
                     .enumerate()
                     .map(|(index, value)| {
-                        element
-                            .decode_scalar(value.clone(), source)
+                        decode_entry_value(input, value, source)
                             .map(|value| Occurrence::Value(json!([index.to_string(), value])))
                     })
                     .collect::<Result<Vec<_>>>()?,
+                source,
             );
         }
         Value::Object(entries) if input.kind == Kind::KeyValue => {
-            let element = input.element.as_deref().expect("entry element");
             return project(
                 input,
                 &entries
                     .iter()
                     .map(|(k, v)| {
-                        element
-                            .decode_scalar(v.clone(), source)
+                        decode_entry_value(input, v, source)
                             .map(|v| Occurrence::Value(json!([k, v])))
                     })
                     .collect::<Result<Vec<_>>>()?,
+                source,
             );
         }
         Value::String(text) => {
-            return project(input, &collection_text(input, text, split, source)?);
+            return project(input, &collection_text(input, text, split, source)?, source);
         }
         _ => {
             return Err(input.failure(
@@ -547,22 +534,18 @@ fn coerce(input: &InputSchema, value: Value, split: &Split, source: Stage) -> Re
         input,
         &values
             .into_iter()
-            .map(|v| decode_collection_element(input, v, source).map(Occurrence::Value))
+            .map(|v| decode_element(input, v, source).map(Occurrence::Value))
             .collect::<Result<Vec<_>>>()?,
+        source,
     )
 }
-fn decode_collection_element(input: &InputSchema, value: Value, source: Stage) -> Result<Value> {
-    if input.kind == Kind::KeyValue {
-        // Text entries carry string values; decoding config JSON objects happens separately.
-        decode_element(input, value, false)
-    } else {
-        input
-            .element
-            .as_deref()
-            .unwrap_or(input)
-            .decode_scalar(value, source)
-            .map_err(|e| input.failure(&e.code, &e.message, false))
-    }
+fn decode_entry_value(input: &InputSchema, value: &Value, source: Stage) -> Result<Value> {
+    input
+        .element
+        .as_deref()
+        .expect("entry element")
+        .decode_raw(value.clone(), source)
+        .map_err(|e| input.failure(&e.code, &e.message, source == Stage::Cli))
 }
 fn collection_text(
     input: &InputSchema,
@@ -579,11 +562,7 @@ fn collection_text(
         return entries
             .iter()
             .map(|(key, value)| {
-                input
-                    .element
-                    .as_deref()
-                    .expect("entry element")
-                    .decode_scalar(value.clone(), source)
+                decode_entry_value(input, value, source)
                     .map(|value| Occurrence::Value(json!([key, value])))
             })
             .collect();
@@ -595,7 +574,7 @@ fn collection_text(
         .values(text)
         .map_err(|e| input.failure(&e.code, &e.message, false))?
         .into_iter()
-        .map(|v| decode_collection_element(input, v, source).map(Occurrence::Value))
+        .map(|v| decode_element(input, v, source).map(Occurrence::Value))
         .collect()
 }
 
@@ -664,7 +643,9 @@ fn validate_path_values(
         if actual.is_none() && checks.create {
             fs.mkdir(path)
                 .map_err(|e| input.failure("CONSTRAINT_VIOLATED", &e.message, false))?;
-            actual = fs.stat(path)?;
+            actual = fs
+                .stat(path)
+                .map_err(|e| input.failure("CONSTRAINT_VIOLATED", &e.message, false))?;
         }
         if actual.is_none() && checks.must_exist {
             return Err(input.failure("CONSTRAINT_VIOLATED", "Path does not exist", false));
@@ -674,28 +655,4 @@ fn validate_path_values(
         }
     }
     Ok(())
-}
-
-/// Testable flag-only resolution; no process-global reads or output.
-pub fn read_flags(
-    schema: &[InputSchema],
-    argv: &[String],
-    options: &ResolveOptions,
-) -> Result<Resolved> {
-    let command = CommandSchema {
-        name: "flags".into(),
-        description: String::new(),
-        aliases: vec![],
-        hidden: false,
-        flags: schema.to_vec(),
-        args: vec![],
-        commands: vec![],
-        examples: vec![],
-    };
-    command.validate()?;
-    resolve(
-        &command,
-        &crate::parse::parse(&command, argv, Default::default())?,
-        options,
-    )
 }

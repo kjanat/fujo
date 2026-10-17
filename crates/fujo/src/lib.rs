@@ -32,8 +32,7 @@
 //! let command = Command::new("demo").flag(arg::string("name"));
 //! ```
 //!
-//! The richer `release`, `batch`, and `settings` examples retain native types in
-//! handlers. Incorrect assumptions are rejected by the compiler:
+//! Handlers read native types:
 //!
 //! ```compile_fail
 //! use fujo::{Command, flag};
@@ -84,10 +83,12 @@ pub mod runtime;
 pub use fujo_core::schema;
 pub mod testkit;
 pub mod typed;
+pub use typed::ActionInfo;
 pub use typed::AsyncDerive;
 pub use typed::AsyncMiddleware;
 pub use typed::Chain;
 pub use typed::Derive;
+pub use typed::FlagSet;
 pub use typed::InputSet;
 pub use typed::Middleware;
 pub use typed::Pipeline;

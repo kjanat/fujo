@@ -30,36 +30,10 @@ updates do not require editing workflow versions.
 
 ## Try the examples
 
-```sh
-cargo run -p fujo --example manifest -- build . --out manifest.json
-cargo run -p fujo --example manifest -- verify . --manifest manifest.json --json
-cargo run -p fujo --example async_build
-cargo run -p fujo --example async_build -- --delay=0ms --jobs=2 --json
-cargo run -p fujo --example terminal
-cargo run -p fujo --example terminal -- --verbose --fail-at=8
-cargo run -p fujo --example greet -- Ada --loud --times 2
-cargo run -p fujo --example greet -- --help
-cargo run -p fujo --example greet -- completions bash
-cargo run -p fujo --example deploy -- db seed --json
-cargo run -p fujo --features url --example release -- plan Cargo.toml --from=1.4.2 --bump=minor --json
-cargo run -p fujo --example batch -- plan Cargo.toml README.md -o planned-output --json
-cargo run -p fujo --features url --example settings -- config show --json
-cargo test -p fujo --features url --test example_clis
-```
-
-The manifest example writes the file named by `--out` and nothing else.
-The deploy example uses `DEPLOY_REGION`, `DEPLOY_TOKEN`, and optional JSON config.
-It demonstrates native enums, global flags, typed derived state, and nested
-commands. It simulates deployment and does not contact an external service.
-
-The [example CLI guide](crates/fujo/examples/README.md) explains the larger
-examples, their input sources, commands, type checks, and test coverage.
-
-The terminal example deliberately runs for about five seconds so its spinner
-frames, progress bar, and status transitions are visible. The other examples
-produce their plans immediately. On Unix, verify that frames arrive over time
-through an actual PTY, that logs and tables stay intact, and that JSON, quiet,
-and piped modes contain no animation controls:
+The [example CLI guide](crates/fujo/examples/README.md) lists the run and test
+commands for every example. On Unix, verify that the terminal and async build
+examples deliver frames over time through an actual PTY, that logs and tables
+stay intact, and that JSON, quiet, and piped modes contain no animation controls:
 
 ```sh
 cargo build -p fujo --example terminal --example async_build

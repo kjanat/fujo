@@ -10,22 +10,7 @@ use std::process::ExitCode;
 use std::str::FromStr;
 use std::time::Duration;
 
-#[derive(Clone, Copy)]
-enum Region {
-    Us,
-    Eu,
-}
-impl FromStr for Region {
-    type Err = &'static str;
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value {
-            "us" => Ok(Self::Us),
-            "eu" => Ok(Self::Eu),
-            _ => Err("Use us or eu"),
-        }
-    }
-}
-fn main() -> ExitCode {
+pub fn app() -> Cli {
     let region = flag::parse::<Region>("region")
         .choices(["us", "eu"])
         .env("DEPLOY_REGION")
@@ -35,7 +20,6 @@ fn main() -> ExitCode {
     let target = arg::string("target");
     let timeout = flag::duration("timeout").default(Duration::from_secs(30));
     let token = flag::string("token").sensitive().env("DEPLOY_TOKEN");
-    struct Authenticated(String);
     let deploy = Command::new("deploy")
         .describe("Deploy to an environment")
         .arg(target.clone())
@@ -71,5 +55,25 @@ fn main() -> ExitCode {
                 .command(Command::new("seed").action(|ctx| ctx.out.json(&json!({"seeded":true})))),
         )
         .completions()
-        .run()
+}
+
+#[derive(Clone, Copy)]
+enum Region {
+    Us,
+    Eu,
+}
+impl FromStr for Region {
+    type Err = &'static str;
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "us" => Ok(Self::Us),
+            "eu" => Ok(Self::Eu),
+            _ => Err("Use us or eu"),
+        }
+    }
+}
+struct Authenticated(String);
+
+pub fn main() -> ExitCode {
+    app().run()
 }

@@ -22,21 +22,17 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
+#[path = "support/reader.rs"]
+mod reader;
 mod support;
+use reader::MapReader;
 
-#[derive(Default)]
-struct Reader(BTreeMap<PathBuf, String>);
-impl ConfigReader for Reader {
-    fn read(&self, path: &Path) -> Result<Option<String>> {
-        Ok(self.0.get(path).cloned())
-    }
-}
 struct Host {
     env: BTreeMap<String, String>,
     queried: Mutex<Vec<String>>,
     stdin: String,
     reads: AtomicUsize,
-    reader: Reader,
+    reader: MapReader,
 }
 impl Default for Host {
     fn default() -> Self {
@@ -45,7 +41,7 @@ impl Default for Host {
             queried: Mutex::new(vec![]),
             stdin: "pipe\n".into(),
             reads: AtomicUsize::new(0),
-            reader: Reader::default(),
+            reader: MapReader::default(),
         }
     }
 }
@@ -148,7 +144,7 @@ fn explicit_config_and_discovery_feed_the_same_resolution_pipeline() {
                 Ok(())
             }));
     let host = Host {
-        reader: Reader(BTreeMap::from([
+        reader: MapReader(BTreeMap::from([
             (
                 PathBuf::from("/project/.app.json"),
                 json!({"server":{"port":8080}}).to_string(),
@@ -184,7 +180,7 @@ fn explicit_config_and_discovery_feed_the_same_resolution_pipeline() {
 #[test]
 fn config_errors_are_returned_without_exposing_file_contents() {
     let settings = ConfigSettings::new("app");
-    let reader = Reader(BTreeMap::from([(
+    let reader = MapReader(BTreeMap::from([(
         PathBuf::from("bad.json"),
         "PRIVATE_STRING".into(),
     )]));
@@ -201,7 +197,7 @@ fn config_errors_are_returned_without_exposing_file_contents() {
 #[test]
 fn custom_config_loaders_and_ordered_candidate_paths_are_supported() {
     let settings=ConfigSettings::new("app").loader(["txt"],|text| Ok(json!({"port":text.parse::<u16>().map_err(|_| CliError::new("INVALID_CONFIG","Invalid port"))?})));
-    let reader = Reader(BTreeMap::from([(
+    let reader = MapReader(BTreeMap::from([(
         PathBuf::from("second.txt"),
         "8080".into(),
     )]));
@@ -264,8 +260,14 @@ fn native_parser_errors_do_not_get_swallowed_by_an_adapter() {
             .action(|_| Ok(())),
     );
     let result = app.run_with(["--port=bad"], RunOptions::default(), &Host::default());
-    assert!(!result.success());
     assert_eq!(result.exit_code, 2);
+    let error = result.error.unwrap();
+    assert_eq!(error.code, "INVALID_VALUE");
+    assert!(
+        error.message.contains("invalid digit found in string"),
+        "{}",
+        error.message
+    );
 }
 #[test]
 fn help_does_not_probe_config_or_environment_sources() {
@@ -306,7 +308,7 @@ fn explicitly_injected_environment_takes_priority_over_runtime_environment() {
 }
 #[test]
 fn config_arrays_are_not_accepted_as_objects() {
-    let reader = Reader(BTreeMap::from([(PathBuf::from("array.json"), "[]".into())]));
+    let reader = MapReader(BTreeMap::from([(PathBuf::from("array.json"), "[]".into())]));
     assert!(
         discover(
             &ConfigSettings::new("app"),
@@ -322,7 +324,7 @@ fn missing_discovery_is_successful_without_a_config() {
     assert!(
         discover(
             &ConfigSettings::new("app"),
-            &Reader::default(),
+            &MapReader::default(),
             &[PathBuf::from("missing.json")],
             None
         )
@@ -371,7 +373,6 @@ fn async_native_execution_reuses_named_environment_stdin_and_os_decoding() {
     ));
     let result = support::run(app.run_with_async(["--name=-"], RunOptions::default(), &host));
     assert!(result.success(), "{:?}", result.error);
-    // stdin() preserves the buffer terminator; log adds its own newline.
     assert_eq!(result.stdout, "pipe\n\n");
     assert_eq!(host.reads.load(Ordering::SeqCst), 1);
     let result =

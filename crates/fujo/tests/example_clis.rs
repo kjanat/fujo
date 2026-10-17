@@ -1,23 +1,24 @@
-//! Exercise the actual example definitions, rather than copying their CLI logic into tests.
 #![cfg(feature = "completion")]
-#[allow(dead_code)]
 #[path = "../examples/async_build.rs"]
 mod async_build;
-#[allow(dead_code)]
 #[path = "../examples/batch.rs"]
 mod batch;
-#[allow(dead_code)]
+#[path = "../examples/deploy.rs"]
+mod deploy;
+#[path = "../examples/greet.rs"]
+mod greet;
 #[path = "../examples/manifest.rs"]
 mod manifest;
-#[allow(dead_code)]
+#[cfg(feature = "url")]
+#[path = "support/prompter.rs"]
+mod prompter;
 #[cfg(feature = "url")]
 #[path = "../examples/release.rs"]
 mod release;
-#[allow(dead_code)]
 #[cfg(feature = "url")]
 #[path = "../examples/settings.rs"]
 mod settings;
-#[allow(dead_code)]
+#[cfg(feature = "terminal-activity")]
 #[path = "../examples/terminal.rs"]
 mod terminal;
 
@@ -28,14 +29,15 @@ use fujo::Value;
 use fujo::json;
 #[cfg(feature = "url")]
 use fujo::prompt::Answer;
-#[cfg(feature = "url")]
-use fujo::prompt::TestPrompter;
 use fujo::resolve::CheckPolicy;
 use fujo::runtime::NativeRuntime;
+use std::process::ExitCode;
 use std::sync::Arc;
 
 fn checked() -> RunOptions {
-    let mut options = RunOptions::default();
+    checked_on(RunOptions::default())
+}
+fn checked_on(mut options: RunOptions) -> RunOptions {
     options.resolve.filesystem = Some(Arc::new(NativeRuntime));
     options.resolve.filesystem_policy = CheckPolicy::Required;
     options
@@ -54,13 +56,12 @@ fn release_resolves_precedence_derives_a_typed_plan_and_redacts_credentials() {
     let dir = tempfile::tempdir().unwrap();
     let artifact = dir.path().join("package.tar");
     std::fs::write(&artifact, "artifact fixture").unwrap();
-    let mut options = checked();
+    let mut options = checked_on(prompter::prompted([Answer::from("PRIVATE_TOKEN")]));
     options.resolve.config = json!({"release":{"from":"1.2.3","bump":"minor"}});
     options
         .resolve
         .env
         .insert("SHIPYARD_VERSION".into(), "2.4.8".into());
-    options.resolve.prompter = Some(Arc::new(TestPrompter::new([Answer::from("PRIVATE_TOKEN")])));
     let result = invoke(
         release::app(),
         &["plan", artifact.to_str().unwrap(), "--publish", "--json"],
@@ -106,15 +107,13 @@ fn release_reports_auth_filesystem_codec_and_version_overflow_errors() {
         );
     }
     let missing = dir.path().join("missing.tar");
-    assert_eq!(
-        invoke(
-            release::app(),
-            &["plan", missing.to_str().unwrap()],
-            checked()
-        )
-        .exit_code,
-        2
+    let result = invoke(
+        release::app(),
+        &["plan", missing.to_str().unwrap()],
+        checked(),
     );
+    assert_eq!(result.exit_code, 2);
+    assert_eq!(result.error.unwrap().code, "CONSTRAINT_VIOLATED");
 }
 
 #[test]
@@ -135,7 +134,7 @@ fn batch_combines_native_limits_collections_provenance_and_progress_without_writ
             "--budget=2mb",
             "--tag=fast,fast,local",
             "--priority=input.txt=20",
-            "--explain",
+            "--sources",
             "--json",
         ],
         checked(),
@@ -158,7 +157,11 @@ fn batch_rejects_invalid_workers_and_target_collisions() {
     let dir = tempfile::tempdir().unwrap();
     let input = dir.path().join("input.txt");
     std::fs::write(&input, "fixture").unwrap();
-    for invalid in ["0", "65", "not-a-number"] {
+    for (invalid, code) in [
+        ("0", "INVALID_VALUE"),
+        ("65", "TOO_MANY_WORKERS"),
+        ("not-a-number", "INVALID_VALUE"),
+    ] {
         let args = [
             "plan",
             input.to_str().unwrap(),
@@ -167,7 +170,11 @@ fn batch_rejects_invalid_workers_and_target_collisions() {
             "--workers",
             invalid,
         ];
-        assert!(!invoke(batch::app(), &args, checked()).success());
+        assert_eq!(
+            invoke(batch::app(), &args, checked()).error.unwrap().code,
+            code,
+            "{invalid}"
+        );
     }
     let second = dir.path().join("nested");
     std::fs::create_dir(&second).unwrap();
@@ -263,9 +270,12 @@ fn every_example_has_non_executing_json_help_and_four_shell_completions() {
         batch::app(),
         #[cfg(feature = "url")]
         settings::app(),
+        #[cfg(feature = "terminal-activity")]
         terminal::app(),
         async_build::app(),
         manifest::app(),
+        greet::app(),
+        deploy::app(),
     ] {
         let result = invoke(app.clone(), &["--help", "--json"], RunOptions::default());
         assert_eq!(document(&result)["format"], "fujo");
@@ -306,6 +316,80 @@ async fn async_build_example_uses_the_applications_executor_and_output_modes() {
 }
 
 #[test]
+fn every_example_main_returns_the_process_exit_code() {
+    let _: fn() -> ExitCode = async_build::main;
+    let _: fn() -> ExitCode = batch::main;
+    let _: fn() -> ExitCode = deploy::main;
+    let _: fn() -> ExitCode = greet::main;
+    let _: fn() -> ExitCode = manifest::main;
+    #[cfg(feature = "url")]
+    let _: fn() -> ExitCode = release::main;
+    #[cfg(feature = "url")]
+    let _: fn() -> ExitCode = settings::main;
+    #[cfg(feature = "terminal-activity")]
+    let _: fn() -> ExitCode = terminal::main;
+}
+
+#[test]
+fn greet_repeats_and_shouts_a_bound_greeting() {
+    let result = invoke(greet::app(), &["Ada"], RunOptions::default());
+    assert!(result.success(), "{:?}", result.error);
+    assert_eq!(result.stdout, "Hello, Ada!\n");
+    let result = invoke(
+        greet::app(),
+        &["Ada", "--loud", "-t", "2"],
+        RunOptions::default(),
+    );
+    assert_eq!(result.stdout, "HELLO, ADA!\nHELLO, ADA!\n");
+    assert_eq!(
+        invoke(greet::app(), &["Ada", "--times=-1"], RunOptions::default())
+            .error
+            .unwrap()
+            .code,
+        "INVALID_VALUE"
+    );
+}
+
+#[test]
+fn deploy_requires_a_token_reads_the_environment_and_seeds_without_one() {
+    let result = invoke(deploy::app(), &["deploy", "prod"], RunOptions::default());
+    assert_eq!(result.error.unwrap().code, "AUTH_REQUIRED");
+    let mut options = RunOptions::default();
+    options
+        .resolve
+        .env
+        .insert("DEPLOY_TOKEN".into(), "PRIVATE_TOKEN".into());
+    options
+        .resolve
+        .env
+        .insert("DEPLOY_REGION".into(), "eu".into());
+    let result = invoke(
+        deploy::app(),
+        &["deploy", "prod", "--timeout=5s", "--json"],
+        options,
+    );
+    assert_eq!(
+        document(&result),
+        json!({"target":"prod", "region":"eu", "status":"deployed"})
+    );
+    assert_eq!(result.stderr, "Deploying with a 5s timeout\n");
+    assert!(!format!("{result:?}").contains("PRIVATE_TOKEN"));
+    let result = invoke(
+        deploy::app(),
+        &["--region=ap", "deploy", "prod"],
+        RunOptions::default(),
+    );
+    assert_eq!(result.error.unwrap().code, "INVALID_VALUE");
+    let result = invoke(
+        deploy::app(),
+        &["db", "seed", "--json"],
+        RunOptions::default(),
+    );
+    assert_eq!(document(&result), json!({"seeded":true}));
+}
+
+#[test]
+#[cfg(feature = "terminal-activity")]
 fn terminal_demo_supports_tables_json_quiet_and_failure_without_waiting() {
     let args = ["--steps=3", "--delay=0ms"];
     let plain = invoke(terminal::app(), &args, RunOptions::default());
@@ -314,7 +398,7 @@ fn terminal_demo_supports_tables_json_quiet_and_failure_without_waiting() {
     assert!(plain.stdout.contains("Build"));
     assert!(!plain.stdout.contains('\x1b'));
     assert!(!plain.stderr.contains('\x1b'));
-    assert_eq!(plain.activities.len(), 9); // Three activity lifecycles and three item updates.
+    assert_eq!(plain.activities.len(), 9);
 
     let machine = invoke(
         terminal::app(),
@@ -356,6 +440,7 @@ fn terminal_demo_supports_tables_json_quiet_and_failure_without_waiting() {
 }
 
 #[test]
+#[cfg(feature = "terminal-activity")]
 fn terminal_demo_rejects_invalid_native_limits_before_work() {
     for (args, code) in [
         (vec!["--steps=0"], "INVALID_VALUE"),
@@ -395,6 +480,13 @@ async fn manifest_build_records_fingerprints_and_verify_reports_drift() {
     );
     let out = dir.path().join("manifest.json");
     let (tree_root, root, out) = (root.clone(), root.to_str().unwrap(), out.to_str().unwrap());
+    let explained = manifest::app()
+        .execute_async(["build", root, "--out", out, "--explain"], checked())
+        .await;
+    assert!(explained.success(), "{:?}", explained.error);
+    assert!(explained.stdout.starts_with("Stages of build:\n"));
+    assert!(explained.activities.is_empty());
+    assert!(!std::path::Path::new(out).exists());
     let result = manifest::app()
         .execute_async(["build", root, "--out", out, "--json"], checked())
         .await;
@@ -410,6 +502,34 @@ async fn manifest_build_records_fingerprints_and_verify_reports_drift() {
     );
     assert_eq!(written["files"]["sub/b.txt"]["size"], 1);
     assert_eq!(written["files"].as_object().unwrap().len(), 2);
+    let explained = manifest::app()
+        .execute_async(["build", root, "--explain", "--json"], checked())
+        .await;
+    let explained = document(&explained);
+    assert_eq!(explained["command"], "build");
+    let kinds: Vec<_> = explained["stages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|stage| {
+            (
+                stage["kind"].as_str().unwrap(),
+                stage["asynchronous"].as_bool().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        kinds,
+        [
+            ("derive", false),
+            ("tap", false),
+            ("shared", false),
+            ("derive", false),
+            ("middleware", true),
+            ("derive", true),
+        ]
+    );
+    assert_eq!(explained["action"]["asynchronous"], false);
 
     let result = manifest::app()
         .execute_async(["verify", root, "--manifest", out, "--json"], checked())

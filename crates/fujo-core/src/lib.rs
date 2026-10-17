@@ -1,4 +1,3 @@
-//! Runtime-independent input schemas, typed values, parsing, and resolution.
 pub mod command;
 pub use fujo_error as error;
 pub mod json_schema;

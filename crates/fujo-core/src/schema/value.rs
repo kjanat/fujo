@@ -1,5 +1,3 @@
-//! Reusable scalar parsers without input bindings or defaults.
-//!
 //! ```compile_fail
 //! use fujo_core::schema::{flag, value};
 //! let tags = flag::array("tags", value::string().env("TAGS"));
@@ -36,7 +34,6 @@ impl<T> ValueParser<T> {
     fn from_input<P>(input: Input<T, P>) -> Self {
         let mut schema = input.into_schema();
         schema.declaration.required = false;
-        schema.declaration.default_value = None;
         schema.native_default = None;
         Self {
             schema,

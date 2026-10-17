@@ -221,8 +221,8 @@ remain schema/runtime validation concerns.
 ## Typed middleware
 
 A typed command runs its stages in declaration order. A middleware is a stage:
-it receives the state derived by the stages before it and a continuation that
-runs every stage after it, including the action.
+it receives the state from the stages before it and a continuation for every
+stage after it, including the action.
 
 ```rust
 use fujo::{Command, arg};
@@ -301,9 +301,9 @@ let plan = Command::new("plan")
 `fujo::pipeline(inputs)` builds stages without a command. A command inherits
 them with `inherit(&pipeline)` after its own stages; the pipeline's state and
 tail become the command's, so a pipeline with a synchronous middleware keeps
-later asynchronous stages out at compile time. The pipeline reads its inputs by
-name, so register them on every command that inherits it, for example through a
-`flags!` bundle at the root:
+later asynchronous stages out at compile time. `inherit` registers the
+pipeline's inputs on the command. `named("label")` labels the stage declared
+last for `stages()` and `--explain`:
 
 ```rust
 use fujo::{Command, flag};
@@ -319,8 +319,42 @@ let show = Command::new("show")
     });
 ```
 
-`Command::stages()` lists dynamic steps and typed stages in execution order with
-their kind, handler type name, and whether they are asynchronous.
+A pipeline can also run once at the root or on a group, before dispatch.
+`Cli::share(&pipeline)` or `Command::share(&pipeline)` runs it for every
+invocation; a command takes its state with `.shared(&pipeline)` as its first
+stage, or anywhere with `ctx.shared(&pipeline)?`. Each read clones the value,
+so it must be `Clone + Send`, and `share` registers the pipeline's inputs on the
+root or group. A shared pipeline wraps only itself; use `inherit` when its
+middleware should wrap the command.
+
+```rust
+use fujo::{Cli, Command, flag};
+
+let session = fujo::pipeline(flag::string("profile").default("dev".into()))
+    .derive(|_, profile, ()| Ok(profile.to_uppercase()));
+let show = Command::new("show")
+    .inputs(())
+    .shared(&session)
+    .action(|ctx, (), profile| {
+        ctx.out.log(profile);
+        Ok(())
+    });
+let app = Cli::new("demo").share(&session).command(show);
+```
+
+`retry(n)` reruns every later stage and the action up to `n` more times with a
+clone of the state. `timeout(limit, sleep)` fails with `TIMEOUT` and drops the
+later stages when the application's timer finishes first, for example
+`timeout(Duration::from_secs(30), tokio::time::sleep)`. A `timeout` declared
+before `retry` bounds all attempts together; one declared after it bounds each
+attempt.
+
+`Command::stages()` lists dynamic steps, then typed stages, in execution order
+with their kind, handler label, and whether they are asynchronous;
+`Command::action_info()` names the action and whether its handler is
+asynchronous. With `Builtins { explain: true, .. }`, `<command> --explain`
+prints the shared stages of the root and the groups on the path, then the
+command's stages and action, and runs nothing; `--json` prints it as a document.
 
 ## Native values
 
@@ -485,12 +519,8 @@ Captures retain messages and completion lines, excluding transient frames and
 cursor controls; `events()` records logical activity lifecycles. Capture-only
 outputs have no timer. Writer failures propagate to the run result.
 
-Try the paced terminal showcase in an interactive terminal (about five seconds):
-
-```sh
-cargo run -p fujo --example terminal
-cargo run -p fujo --example terminal -- --verbose --fail-at=8
-```
+The [terminal example](crates/fujo/examples/README.md#live-terminal-showcase)
+shows these activities in an interactive terminal.
 
 `--help` and optional `--version` run before input validation. `--json`, `--quiet`,
 `-q`, and help can be released to application flags with `Builtins`. Everything
@@ -518,7 +548,7 @@ The generators also support PowerShell. Calling the flag without a shell detects
 
 `.config(ConfigSettings::new("mycli"))` discovers JSON config files along project
 ancestors, then user and system config directories. `--config PATH` selects one
-file explicitly. Custom format loaders accept a parser closure and file extensions.
+file explicitly and appears in help and completions. Custom format loaders accept a parser closure and file extensions.
 `cargo_manifest!()` provides compile-time Cargo package metadata.
 
 Each project ancestor is checked for `.mycli.json`, `mycli.config.json`, and
@@ -555,8 +585,7 @@ Inject `TestPrompter`, `FileSystem`, or a complete `Runtime` for other test case
 `testkit::run_cli(&app, ...)` preserves the complete application configuration.
 `run_command_with_builtins` lets command-only tests release builtin names.
 `Cli::definition()` exports Rust schema metadata with `format: "fujo"`
-and `version: 1`. The discriminator was renamed from `dreamcli-rust` as part
-of the Fujo rename; the document version is unchanged.
+and `version: 1`.
 `json_schema::input_schema()` describes JSON-representable resolved
 values. Opaque custom Rust values are omitted from JSON exports unless they use a
 codec with a JSON representation.
@@ -571,21 +600,11 @@ Use `PathChecks::file()` for existing input files and
 
 ## Examples
 
-The [example CLI guide](crates/fujo/examples/README.md) walks through a
-directory manifest tool, a release planner, a batch-job planner, a nested
-settings inspector, and a live terminal demo, each with its command logic kept
-in one `app()` function. The [manifest example](crates/fujo/examples/manifest.rs)
+The [example CLI guide](crates/fujo/examples/README.md) describes each example,
+its commands, and its tests. The [manifest example](crates/fujo/examples/manifest.rs)
 is the complete application: named input bundles, shared globals, two commands,
-typed middleware, concurrent async work, and terminal output.
-
-```sh
-cargo run -p fujo --example manifest -- build . --out manifest.json
-cargo run -p fujo --example manifest -- verify . --manifest manifest.json --json
-```
-
-Their actual definitions are exercised by integration tests, and compile-fail
-checks demonstrate the native type guarantees. Build and validation commands
-are in [CONTRIBUTING.md](CONTRIBUTING.md).
+typed middleware, concurrent async work, and terminal output. Build and
+validation commands are in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Workspace crates
 
@@ -603,7 +622,7 @@ re-exports the APIs applications normally need.
 
 Fujo is a native Rust port of DreamCLI. The
 [DreamCLI TypeScript project](https://github.com/kjanat/dreamcli) remains its
-upstream behavioral reference. Port compatibility and deliberate Rust
+upstream behavioral reference. Port compatibility and Rust
 differences are documented in [PORTING.md](PORTING.md).
 
 ## Cargo features
@@ -640,7 +659,7 @@ Serde and `serde_json` remain mandatory because config, prompt interchange, and
 metadata use them. Definition and JSON Schema exports remain available.
 
 Output can also be adopted independently by a clap application or another parser:
-depend on `fujo-output` alone and pass the application's writers and
+depend only on `fujo-output` and pass the application's writers and
 `OutputOptions` to `Output::with_writers`. That crate depends on neither core
 resolution nor completion generation. Standalone `fujo-complete` uses core
 metadata without bringing in the specialized value dependencies.

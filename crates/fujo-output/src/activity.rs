@@ -1,4 +1,3 @@
-//! A shared terminal line, with handle-owned spinner timers and logical events.
 use super::ActivityEvent;
 use super::Output;
 
@@ -12,10 +11,6 @@ use terminal::Kind;
 use terminal::Ticker;
 
 impl Output {
-    /// With `terminal-activity`, animate on a TTY every 80 ms while work runs.
-    /// JSON, quiet, and non-TTY outputs remain silent. Capture-only outputs have
-    /// no timer. Without the feature, only logical events are recorded.
-    /// Use `events()` to inspect the lifecycle in tests.
     pub fn spinner(&self, label: impl Into<String>) -> Spinner {
         let label = label.into();
         let id = self.begin_activity(&label, None);
@@ -30,7 +25,6 @@ impl Output {
             finished: false,
         }
     }
-    /// Record progress and, with `terminal-activity`, render a bounded TTY bar.
     pub fn progress(&self, label: impl Into<String>, total: u64) -> Progress {
         let label = label.into();
         let id = self.begin_activity(&label, Some(total));
@@ -50,7 +44,7 @@ impl Output {
         #[cfg(feature = "terminal-activity")]
         {
             self.activity_visible().then(|| {
-                self.state.lock().expect("output lock").begin_activity(
+                self.state().begin_activity(
                     label.into(),
                     total.map_or(Kind::Spinner(0), |total| Kind::Progress {
                         current: 0,
@@ -66,7 +60,7 @@ impl Output {
         }
     }
     fn end_activity(&self, _id: Option<u64>, label: String, success: bool) {
-        let mut state = self.state.lock().expect("output lock");
+        let mut state = self.state();
         state.events.push(ActivityEvent::Finish {
             label: label.clone(),
             success,
@@ -81,7 +75,6 @@ impl Output {
     }
 }
 
-/// A logical spinner with an optional terminal timer, joined before completion.
 pub struct Spinner {
     output: Output,
     label: String,
@@ -90,12 +83,22 @@ pub struct Spinner {
     ticker: Option<Ticker>,
     finished: bool,
 }
+impl std::fmt::Debug for Spinner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Spinner")
+            .field("output", &self.output)
+            .field("label", &self.label)
+            .field("id", &self.id)
+            .field("finished", &self.finished)
+            .finish_non_exhaustive()
+    }
+}
 impl Spinner {
     pub fn update(&mut self, label: impl Into<String>) {
         self.label = label.into();
         #[cfg(feature = "terminal-activity")]
         {
-            let mut state = self.output.state.lock().expect("output lock");
+            let mut state = self.output.state();
             if let Some(line) = state
                 .activities
                 .active
@@ -130,6 +133,7 @@ impl Drop for Spinner {
     }
 }
 
+#[derive(Debug)]
 pub struct Progress {
     output: Output,
     label: String,
@@ -141,7 +145,7 @@ pub struct Progress {
 impl Progress {
     pub fn update(&mut self, current: u64) {
         self.current = current.min(self.total);
-        let mut state = self.output.state.lock().expect("output lock");
+        let mut state = self.output.state();
         state.events.push(ActivityEvent::Update {
             label: self.label.clone(),
             current: self.current,
@@ -278,7 +282,7 @@ mod tests {
         )
         .unwrap();
         out.raw_stdout("partial");
-        progress.update(1); // Must not paint over a partial application line.
+        progress.update(1);
         assert!(buffer.text().ends_with("partial"));
         out.raw_stdout(" line\n");
         assert!(
@@ -289,7 +293,7 @@ mod tests {
         progress.done("done");
         let text = buffer.text();
         assert!(text.contains("\r\x1b[2Kmessage\nfiles ["));
-        assert!(text.contains("\r\x1b[2KName\nfiles ["));
+        assert!(text.contains("\r\x1b[2KName\none\nfiles ["));
         assert!(text.ends_with("\r\x1b[2K✓ done\n"));
         assert_eq!(
             out.captured(),
@@ -331,7 +335,6 @@ mod tests {
         rx.recv_timeout(Duration::from_secs(3))
             .expect("timer did not write");
         assert_eq!(out.finish().unwrap_err().code, "IO_ERROR");
-        // Drain the failed tick (clear + frame); later ticks must not keep writing.
         let _ = rx.try_iter().count();
         assert_eq!(
             rx.recv_timeout(TICK * 2),
@@ -339,6 +342,49 @@ mod tests {
         );
         drop(spinner);
         assert_eq!(out.events().len(), 2);
+    }
+
+    #[test]
+    fn a_panicking_timer_write_poisons_the_lock_without_breaking_completion() {
+        struct PanicsAfterStart {
+            writes: usize,
+            panicked: mpsc::Sender<()>,
+        }
+        impl Write for PanicsAfterStart {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.writes += 1;
+                if self.writes != 2 {
+                    return Ok(bytes.len());
+                }
+                self.panicked.send(()).unwrap();
+                panic!("terminal writer panicked on a background tick");
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let (tx, rx) = mpsc::channel();
+        let out = Output::with_writers(
+            std::io::sink(),
+            PanicsAfterStart {
+                writes: 0,
+                panicked: tx,
+            },
+            tty(),
+        );
+        let spinner = out.spinner("work");
+        rx.recv_timeout(Duration::from_secs(3))
+            .expect("timer did not write");
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !out.state.is_poisoned() {
+            assert!(Instant::now() < deadline, "lock was not poisoned");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        spinner.succeed("done");
+        assert_eq!(out.events().len(), 2);
+        assert!(out.captured().stderr.ends_with("✓ done\n"));
+        drop(out.spinner("again"));
+        assert_eq!(out.events().len(), 4);
     }
 
     #[test]
@@ -391,5 +437,35 @@ mod tests {
         }
         let out = Output::capture(tty());
         assert!(out.spinner("capture has no timer").ticker.is_none());
+    }
+
+    #[test]
+    fn raw_stderr_clears_the_activity_line_and_redraws_after_a_newline() {
+        let buffer = Buffer::default();
+        let out = Output::with_writers(std::io::sink(), buffer.clone(), tty());
+        let progress = out.progress("files", 2);
+        assert!(
+            buffer
+                .text()
+                .ends_with("files [                    ]   0% 0/2")
+        );
+        out.raw_stderr("Name?\n> ");
+        assert!(buffer.text().ends_with("\r\x1b[2KName?\n> "));
+        out.raw_stderr("Ada\n");
+        assert!(
+            buffer
+                .text()
+                .ends_with("> Ada\nfiles [                    ]   0% 0/2")
+        );
+        progress.done("done");
+        assert_eq!(out.captured().stderr, "Name?\n> Ada\n✓ done\n");
+    }
+
+    #[test]
+    fn handles_expose_their_state_through_debug() {
+        let out = Output::capture(Default::default());
+        let spinner = out.spinner("work");
+        assert!(format!("{spinner:?}").starts_with("Spinner { output: Output {"));
+        assert!(format!("{:?}", out.progress("items", 2)).contains("total: 2"));
     }
 }

@@ -1,10 +1,12 @@
-//! Static shell completions generated from the portable command schema.
 use fujo_core::CliError;
 use fujo_core::Result;
 use fujo_core::command::CommandSchema;
+use fujo_core::command::GlobalFlag;
 use fujo_core::command::ProgramSchema;
+use fujo_core::parse::ParseOptions;
 use fujo_core::schema::InputSchema;
 use std::fmt::Write;
+use std::path::Path;
 use std::str::FromStr;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -29,10 +31,88 @@ impl FromStr for Shell {
         }
     }
 }
+impl Shell {
+    pub fn from_path(path: &str) -> Option<Self> {
+        Path::new(path).file_stem()?.to_str()?.parse().ok()
+    }
+}
 struct Node {
     path: String,
     flags: Vec<InputSchema>,
     children: Vec<(String, String)>,
+}
+impl Node {
+    fn visible_flags(&self) -> impl Iterator<Item = &InputSchema> {
+        self.flags.iter().filter(|f| !f.hidden)
+    }
+    fn value_flags(&self) -> impl Iterator<Item = &InputSchema> {
+        self.visible_flags().filter(|f| f.expects_value())
+    }
+    fn lookup(&self, options: ParseOptions) -> Lookup<'_> {
+        fujo_core::parse::flag_lookup(&self.flags, options)
+    }
+    fn forms(&self, lookup: &Lookup<'_>, flag: &InputSchema) -> Vec<String> {
+        std::iter::once(format!(
+            "--{}",
+            fujo_core::parse::canonical_flag_name_with(lookup, flag)
+        ))
+        .chain(flag.aliases.iter().filter(|a| !a.hidden).map(|a| {
+            format!(
+                "{}{}",
+                if a.name.chars().count() == 1 {
+                    "-"
+                } else {
+                    "--"
+                },
+                a.name
+            )
+        }))
+        .chain(flag.negated_name.as_ref().map(|n| format!("--{n}")))
+        .collect()
+    }
+    fn value_forms(&self, options: ParseOptions) -> Vec<(&InputSchema, String)> {
+        let lookup = self.lookup(options);
+        self.value_flags()
+            .flat_map(|flag| {
+                self.forms(&lookup, flag)
+                    .into_iter()
+                    .map(move |form| (flag, form))
+            })
+            .collect()
+    }
+    fn keyed(&self, form: &str) -> String {
+        format!("{}:{form}", self.path)
+    }
+    fn child_paths(&self) -> impl Iterator<Item = (&str, String)> {
+        self.children.iter().map(|(name, canonical)| {
+            let path = if self.path.is_empty() {
+                canonical.clone()
+            } else {
+                format!("{} {canonical}", self.path)
+            };
+            (name.as_str(), path)
+        })
+    }
+    fn candidates(&self, globals: &[GlobalFlag], options: ParseOptions) -> Vec<String> {
+        let lookup = self.lookup(options);
+        self.children
+            .iter()
+            .map(|(name, _)| name.clone())
+            .chain(
+                self.visible_flags()
+                    .flat_map(|flag| self.forms(&lookup, flag)),
+            )
+            .chain(globals.iter().flat_map(|global| {
+                std::iter::once(global.long)
+                    .chain(global.short)
+                    .map(str::to_owned)
+            }))
+            .collect()
+    }
+}
+type Lookup<'a> = std::collections::BTreeMap<String, (&'a InputSchema, bool)>;
+fn enum_values(flag: &InputSchema) -> &[String] {
+    &flag.element.as_deref().unwrap_or(flag).enum_values
 }
 fn nodes(program: &ProgramSchema) -> Vec<Node> {
     fn walk(
@@ -52,34 +132,21 @@ fn nodes(program: &ProgramSchema) -> Vec<Node> {
                 .filter(|f| !command.flags.iter().any(|local| local.name == f.name))
                 .cloned()
                 .collect();
-            flags.extend(command.flags.clone());
+            flags.extend(command.flags.iter().cloned());
+            let propagated: Vec<_> = flags.iter().filter(|f| f.propagate).cloned().collect();
             nodes.push(Node {
                 path: path.clone(),
-                flags: flags.clone(),
+                flags,
                 children: children(&command.commands),
             });
-            walk(
-                &command.commands,
-                &path,
-                &flags
-                    .into_iter()
-                    .filter(|f| f.propagate)
-                    .collect::<Vec<_>>(),
-                nodes,
-            );
+            walk(&command.commands, &path, &propagated, nodes);
         }
     }
     let mut flags = program.flags.clone();
-    flags.extend(
-        program
-            .default
-            .as_ref()
-            .map(|c| c.flags.clone())
-            .unwrap_or_default(),
-    );
+    flags.extend(program.default.iter().flat_map(|c| c.flags.iter().cloned()));
     let mut nodes = vec![Node {
         path: String::new(),
-        flags: flags.clone(),
+        flags,
         children: children(&program.commands),
     }];
     if program.completions {
@@ -91,10 +158,7 @@ fn nodes(program: &ProgramSchema) -> Vec<Node> {
         .flags
         .iter()
         .cloned()
-        .map(|mut f| {
-            f = f.propagated();
-            f
-        })
+        .map(InputSchema::propagated)
         .collect();
     walk(&program.commands, "", &inherited, &mut nodes);
     if program.completions {
@@ -113,38 +177,26 @@ fn children(commands: &[CommandSchema]) -> Vec<(String, String)> {
         .iter()
         .filter(|c| !c.hidden)
         .flat_map(|c| {
-            std::iter::once(c.name.clone())
-                .chain(c.aliases.clone())
-                .map(|name| (name, c.name.clone()))
-                .collect::<Vec<_>>()
+            std::iter::once(&c.name)
+                .chain(&c.aliases)
+                .map(move |name| (name.clone(), c.name.clone()))
         })
         .collect()
 }
-fn forms(
-    input: &InputSchema,
-    flags: &[InputSchema],
-    options: fujo_core::parse::ParseOptions,
-) -> Vec<String> {
-    std::iter::once(format!(
-        "--{}",
-        fujo_core::parse::canonical_flag_name(input, flags, options)
-    ))
-    .chain(input.aliases.iter().filter(|a| !a.hidden).map(|a| {
-        format!(
-            "{}{}",
-            if a.name.chars().count() == 1 {
-                "-"
-            } else {
-                "--"
-            },
-            a.name
-        )
-    }))
-    .chain(input.negated_name.as_ref().map(|n| format!("--{n}")))
-    .collect()
-}
 fn quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
+}
+fn fish_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\\', "\\\\").replace('\'', "\\'"))
+}
+fn fish_words(values: &[String]) -> String {
+    fish_quote(
+        &values
+            .iter()
+            .map(|v| fish_quote(v))
+            .collect::<Vec<_>>()
+            .join(" "),
+    )
 }
 fn ps_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "''"))
@@ -164,25 +216,21 @@ pub fn generate(program: &ProgramSchema, shell: Shell) -> String {
 pub fn generate_with_options(
     program: &ProgramSchema,
     shell: Shell,
-    options: fujo_core::parse::ParseOptions,
+    options: ParseOptions,
 ) -> String {
     let nodes = nodes(program);
     let function = identifier(&program.name);
-    let globals: Vec<&str> = [
-        program.builtins.help.then_some("--help"),
-        program.version.as_ref().map(|_| "--version"),
-        program.builtins.json.then_some("--json"),
-        program.builtins.quiet.then_some("--quiet"),
-    ]
-    .into_iter()
-    .flatten()
-    .collect();
+    let globals = program.builtins.global_flags(
+        program.version.is_some(),
+        program.completions,
+        program.config,
+    );
     let script = match shell {
         Shell::Bash | Shell::Zsh => {
             let bash = shell == Shell::Bash;
             let mut script = if bash {
                 format!(
-                    "{function}() {{\n  local cur=\"${{COMP_WORDS[COMP_CWORD]}}\" prev=\"${{COMP_WORDS[COMP_CWORD-1]}}\" path='' token i skip=0\n  local -a words=(\"${{COMP_WORDS[@]}}\") candidates=()\n  local limit=$COMP_CWORD\n  for ((i=1; i<limit; i++)); do\n"
+                    "{function}() {{\n  local cur prev path='' token i skip=0 cword\n  local -a words candidates=()\n  if type _comp_get_words &>/dev/null; then\n    _comp_get_words -n =: cur prev words cword\n  elif type _get_comp_words_by_ref &>/dev/null; then\n    _get_comp_words_by_ref -n =: cur prev words cword\n  else\n    words=(); cword=0\n    for ((i=0; i<${{#COMP_WORDS[@]}}; i++)); do\n      if (( i > 0 )) && [[ ${{COMP_WORDS[i]}} == =* || ${{COMP_WORDS[i]}} == :* || ${{COMP_WORDS[i-1]}} == *= || ${{COMP_WORDS[i-1]}} == *: ]]; then\n        words[${{#words[@]}}-1]+=${{COMP_WORDS[i]}}\n      else\n        words+=(\"${{COMP_WORDS[i]}}\")\n      fi\n      (( i == COMP_CWORD )) && cword=$((${{#words[@]}}-1))\n    done\n    cur=${{words[cword]}} prev=${{words[cword-1]}}\n  fi\n  for ((i=1; i<cword; i++)); do\n"
                 )
             } else {
                 format!(
@@ -192,74 +240,61 @@ pub fn generate_with_options(
             };
             script.push_str("    token=\"${words[i]}\"\n    (( skip )) && { skip=0; continue; }\n    [[ $token == -- ]] && break\n    case \"$path:$token\" in\n");
             for node in &nodes {
-                for flag in node.flags.iter().filter(|f| !f.hidden && f.expects_value()) {
-                    for form in forms(flag, &node.flags, options) {
-                        let _ = writeln!(
-                            script,
-                            "      {}) skip=1; continue ;;",
-                            quote(&format!("{}:{form}", node.path))
-                        );
-                    }
+                for (_, form) in node.value_forms(options) {
+                    let _ = writeln!(
+                        script,
+                        "      {}) skip=1; continue ;;",
+                        quote(&node.keyed(&form))
+                    );
                 }
-                for (name, canonical) in &node.children {
-                    let path = if node.path.is_empty() {
-                        canonical.clone()
-                    } else {
-                        format!("{} {canonical}", node.path)
-                    };
+                for (name, path) in node.child_paths() {
                     let _ = writeln!(
                         script,
                         "      {}) path={} ;;",
-                        quote(&format!("{}:{name}", node.path)),
+                        quote(&node.keyed(name)),
                         quote(&path)
                     );
                 }
             }
-            script.push_str("    esac\n  done\n  local value_cur=\"$cur\" prefix='' value_flag=\"$prev\"\n  if [[ $cur == --*=* ]]; then value_flag=\"${cur%%=*}\"; value_cur=\"${cur#*=}\"; prefix=\"${cur%%=*}=\"; fi\n  case \"$path:$value_flag\" in\n");
+            script.push_str("    esac\n  done\n  local value_cur=\"$cur\" prefix='' value_flag=\"$prev\"\n  if [[ $cur == --*=* ]]; then value_flag=\"${cur%%=*}\"; value_cur=\"${cur#*=}\"; prefix=\"${cur%%=*}=\"; fi\n");
+            if bash {
+                script.push_str("  [[ $COMP_WORDBREAKS == *=* ]] && prefix=''\n");
+            }
+            script.push_str("  case \"$path:$value_flag\" in\n");
             for node in &nodes {
-                for flag in node.flags.iter().filter(|f| !f.hidden && f.expects_value()) {
-                    let element = flag.element.as_deref().unwrap_or(flag);
-                    for form in forms(flag, &node.flags, options) {
-                        let _ =
-                            writeln!(script, "    {})", quote(&format!("{}:{form}", node.path)));
-                        if !element.enum_values.is_empty() {
-                            let _ = writeln!(
-                                script,
-                                "      candidates=({})",
-                                element
-                                    .enum_values
-                                    .iter()
-                                    .map(|s| quote(s))
-                                    .collect::<Vec<_>>()
-                                    .join(" ")
-                            );
-                            if bash {
-                                script.push_str("      COMPREPLY=(); for token in \"${candidates[@]}\"; do [[ $token == \"$value_cur\"* ]] && COMPREPLY+=(\"$prefix$token\"); done; return ;;\n");
-                            } else {
-                                script.push_str("      compadd -P \"$prefix\" -- \"${candidates[@]}\"; return ;;\n");
-                            }
-                        } else if bash {
-                            script.push_str("      mapfile -t COMPREPLY < <(compgen -f -- \"$value_cur\"); if [[ -n $prefix ]]; then for i in \"${!COMPREPLY[@]}\"; do COMPREPLY[i]=\"$prefix${COMPREPLY[i]}\"; done; fi; return ;;\n");
+                for (flag, form) in node.value_forms(options) {
+                    let _ = writeln!(script, "    {})", quote(&node.keyed(&form)));
+                    let values = enum_values(flag);
+                    if !values.is_empty() {
+                        let _ = writeln!(
+                            script,
+                            "      candidates=({})",
+                            values
+                                .iter()
+                                .map(|s| quote(s))
+                                .collect::<Vec<_>>()
+                                .join(" ")
+                        );
+                        if bash {
+                            script.push_str("      COMPREPLY=(); for token in \"${candidates[@]}\"; do [[ $token == \"$value_cur\"* ]] && COMPREPLY+=(\"$prefix$token\"); done; return ;;\n");
                         } else {
-                            script.push_str("      _files; return ;;\n");
+                            script.push_str(
+                                "      compadd -P \"$prefix\" -- \"${candidates[@]}\"; return ;;\n",
+                            );
                         }
+                    } else if bash {
+                        script.push_str("      mapfile -t COMPREPLY < <(compgen -f -- \"$value_cur\"); if [[ -n $prefix ]]; then for i in \"${!COMPREPLY[@]}\"; do COMPREPLY[i]=\"$prefix${COMPREPLY[i]}\"; done; fi; return ;;\n");
+                    } else {
+                        script.push_str("      _files; return ;;\n");
                     }
                 }
             }
             script.push_str("  esac\n  case \"$path\" in\n");
             for node in &nodes {
                 let candidates = node
-                    .children
+                    .candidates(&globals, options)
                     .iter()
-                    .map(|(n, _)| n.clone())
-                    .chain(
-                        node.flags
-                            .iter()
-                            .filter(|f| !f.hidden)
-                            .flat_map(|flag| forms(flag, &node.flags, options)),
-                    )
-                    .chain(globals.iter().map(|s| s.to_string()))
-                    .map(|s| quote(&s))
+                    .map(|s| quote(s))
                     .collect::<Vec<_>>()
                     .join(" ");
                 let _ = writeln!(
@@ -283,25 +318,18 @@ pub fn generate_with_options(
                 "function {function}\n  set -l expected (string join ' ' -- $argv)\n  set -l tokens (commandline -opc)\n  set -e tokens[1]\n  set -l path ''\n  set -l skip 0\n  for token in $tokens\n    if test $skip -eq 1\n      set skip 0\n      continue\n    end\n    if test \"$token\" = --\n      break\n    end\n    switch \"$path:$token\"\n"
             );
             for node in &nodes {
-                for flag in node.flags.iter().filter(|f| !f.hidden && f.expects_value()) {
-                    for form in forms(flag, &node.flags, options) {
-                        let _ = writeln!(
-                            script,
-                            "      case {}\n        set skip 1\n        continue",
-                            quote(&format!("{}:{form}", node.path))
-                        );
-                    }
+                for (_, form) in node.value_forms(options) {
+                    let _ = writeln!(
+                        script,
+                        "      case {}\n        set skip 1\n        continue",
+                        quote(&node.keyed(&form))
+                    );
                 }
-                for (name, canonical) in &node.children {
-                    let path = if node.path.is_empty() {
-                        canonical.clone()
-                    } else {
-                        format!("{} {canonical}", node.path)
-                    };
+                for (name, path) in node.child_paths() {
                     let _ = writeln!(
                         script,
                         "      case {}\n        set path {}",
-                        quote(&format!("{}:{name}", node.path)),
+                        quote(&node.keyed(name)),
                         quote(&path)
                     );
                 }
@@ -329,8 +357,9 @@ pub fn generate_with_options(
                         quote(name)
                     );
                 }
-                for flag in node.flags.iter().filter(|f| !f.hidden) {
-                    for form in forms(flag, &node.flags, options) {
+                let lookup = node.lookup(options);
+                for flag in node.visible_flags() {
+                    for form in node.forms(&lookup, flag) {
                         let long = form.starts_with("--");
                         let _ = write!(
                             script,
@@ -344,22 +373,28 @@ pub fn generate_with_options(
                         if flag.expects_value() {
                             script.push_str(" -r");
                         }
-                        let element = flag.element.as_deref().unwrap_or(flag);
-                        if !element.enum_values.is_empty() {
-                            let _ =
-                                write!(script, " -f -a {}", quote(&element.enum_values.join(" ")));
+                        let values = enum_values(flag);
+                        if !values.is_empty() {
+                            let _ = write!(script, " -f -a {}", fish_words(values));
                         }
                         script.push('\n');
                     }
                 }
             }
-            for global in globals {
-                let _ = writeln!(
+            for global in &globals {
+                let _ = write!(
                     script,
                     "complete -c {} -l {}",
                     quote(&program.name),
-                    quote(global.trim_start_matches('-'))
+                    quote(global.long.trim_start_matches('-'))
                 );
+                if let Some(short) = global.short {
+                    let _ = write!(script, " -s {}", quote(short.trim_start_matches('-')));
+                }
+                if global.value.is_some() {
+                    script.push_str(" -r");
+                }
+                script.push('\n');
             }
             script
         }
@@ -369,25 +404,18 @@ pub fn generate_with_options(
                 ps_quote(&program.name)
             );
             for node in &nodes {
-                for flag in node.flags.iter().filter(|f| !f.hidden && f.expects_value()) {
-                    for form in forms(flag, &node.flags, options) {
-                        let _ = writeln!(
-                            script,
-                            "      {} {{ $skip = $true }}",
-                            ps_quote(&format!("{}:{form}", node.path))
-                        );
-                    }
+                for (_, form) in node.value_forms(options) {
+                    let _ = writeln!(
+                        script,
+                        "      {} {{ $skip = $true }}",
+                        ps_quote(&node.keyed(&form))
+                    );
                 }
-                for (name, canonical) in &node.children {
-                    let path = if node.path.is_empty() {
-                        canonical.clone()
-                    } else {
-                        format!("{} {canonical}", node.path)
-                    };
+                for (name, path) in node.child_paths() {
                     let _ = writeln!(
                         script,
                         "      {} {{ $path = {} }}",
-                        ps_quote(&format!("{}:{name}", node.path)),
+                        ps_quote(&node.keyed(name)),
                         ps_quote(&path)
                     );
                 }
@@ -397,17 +425,9 @@ pub fn generate_with_options(
             );
             for node in &nodes {
                 let candidates = node
-                    .children
+                    .candidates(&globals, options)
                     .iter()
-                    .map(|(n, _)| n.clone())
-                    .chain(
-                        node.flags
-                            .iter()
-                            .filter(|f| !f.hidden)
-                            .flat_map(|flag| forms(flag, &node.flags, options)),
-                    )
-                    .chain(globals.iter().map(|s| s.to_string()))
-                    .map(|s| ps_quote(&s))
+                    .map(|s| ps_quote(s))
                     .collect::<Vec<_>>()
                     .join(", ");
                 let _ = writeln!(
@@ -418,24 +438,17 @@ pub fn generate_with_options(
             }
             script.push_str("  }\n  $valueFlag = $previous; $valueCur = $wordToComplete; $prefix = ''\n  if ($wordToComplete.StartsWith('--') -and $wordToComplete.Contains('=')) { $index = $wordToComplete.IndexOf('='); $valueFlag = $wordToComplete.Substring(0, $index); $valueCur = $wordToComplete.Substring($index+1); $prefix = $valueFlag + '=' }\n  switch (\"${path}:$valueFlag\") {\n");
             for node in &nodes {
-                for flag in node.flags.iter().filter(|f| !f.hidden) {
-                    let element = flag.element.as_deref().unwrap_or(flag);
-                    if element.enum_values.is_empty() {
-                        continue;
-                    }
-                    for form in forms(flag, &node.flags, options) {
-                        let _ = writeln!(
-                            script,
-                            "    {} {{ $candidates = @({}) }}",
-                            ps_quote(&format!("{}:{form}", node.path)),
-                            element
-                                .enum_values
-                                .iter()
-                                .map(|s| ps_quote(s))
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        );
-                    }
+                for (flag, form) in node.value_forms(options) {
+                    let _ = writeln!(
+                        script,
+                        "    {} {{ $candidates = @({}) }}",
+                        ps_quote(&node.keyed(&form)),
+                        enum_values(flag)
+                            .iter()
+                            .map(|s| ps_quote(s))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    );
                 }
             }
             script.push_str("  }\n  $candidates | Where-Object { $_.StartsWith($valueCur, [StringComparison]::OrdinalIgnoreCase) } | ForEach-Object { [System.Management.Automation.CompletionResult]::new($prefix + $_, $_, 'ParameterValue', $_) }\n}\n");

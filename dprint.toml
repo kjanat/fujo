@@ -11,7 +11,7 @@ lineWidth = 120
 cwd = "${configDir}"
 
 [[exec.commands]]
-command = "rustfmt --edition 2024"  # --config imports_granularity=item
+command = "rustfmt --edition 2024"
 exts    = ["rs"]
 
 [[exec.commands]]

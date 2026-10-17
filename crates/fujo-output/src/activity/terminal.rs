@@ -1,6 +1,6 @@
-//! Optional terminal line renderer and scoped timer thread.
 use crate::Output;
 use crate::State;
+use crate::lock;
 use std::sync::Arc;
 use std::sync::mpsc;
 use std::thread::JoinHandle;
@@ -105,7 +105,7 @@ pub(super) struct Ticker {
 impl Ticker {
     pub(super) fn start(output: &Output, id: Option<u64>) -> Option<Self> {
         id.and_then(|id| {
-            output.state.lock().expect("output lock").stderr.as_ref()?;
+            output.state().stderr.as_ref()?;
             let state = Arc::downgrade(&output.state);
             let (stop, stopped) = mpsc::channel();
             match thread::Builder::new()
@@ -116,7 +116,7 @@ impl Ticker {
                         Err(mpsc::RecvTimeoutError::Timeout)
                     ) {
                         let Some(state) = state.upgrade() else { break };
-                        let mut state = state.lock().expect("output lock");
+                        let mut state = lock(&state);
                         if state.error.is_some() {
                             break;
                         }
@@ -125,12 +125,7 @@ impl Ticker {
                 }) {
                 Ok(thread) => Some(Ticker { stop, thread }),
                 Err(error) => {
-                    output
-                        .state
-                        .lock()
-                        .expect("output lock")
-                        .error
-                        .get_or_insert_with(|| error.into());
+                    output.state().error.get_or_insert_with(|| error.into());
                     None
                 }
             }

@@ -1,4 +1,3 @@
-//! A deliberately paced terminal showcase: real spinner ticks, live bars, and logs.
 use fujo::Cli;
 use fujo::CliError;
 use fujo::Command;
@@ -18,10 +17,10 @@ pub fn app() -> Cli {
             if n.get() <= 100 {
                 Ok(())
             } else {
-                Err(CliError::validation("INVALID_STEPS", "Use 1–100 steps"))
+                Err(CliError::validation("INVALID_STEPS", "Use 1-100 steps"))
             }
         })
-        .describe("Number of simulated work items (1–100)");
+        .describe("Number of simulated work items (1-100)");
     let delay = flag::duration("delay")
         .default(Duration::from_millis(100))
         .validate(|d| {
@@ -70,7 +69,7 @@ pub fn app() -> Cli {
                 .debug(format!("Processing {steps} items with {delay:?} per item"));
 
             let mut spinner = ctx.out.spinner("Discovering inputs");
-            thread::sleep(delay * 8); // Spinner animates while the handler is blocked.
+            thread::sleep(delay * 8);
             spinner.update("Checking dependencies");
             ctx.out
                 .info("Found local inputs; checking the build environment");
@@ -113,9 +112,12 @@ pub fn app() -> Cli {
                 TableFormat::Pretty,
             )
         });
-    Cli::new("terminal").default(demo).completions()
+    Cli::new("terminal")
+        .version(env!("CARGO_PKG_VERSION"))
+        .default(demo)
+        .completions()
 }
 
-fn main() -> std::process::ExitCode {
+pub fn main() -> std::process::ExitCode {
     app().run()
 }

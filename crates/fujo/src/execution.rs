@@ -1,4 +1,3 @@
-//! Executor-independent invocation of synchronous and asynchronous callbacks.
 use crate::CliError;
 use crate::Context;
 use crate::Result;
@@ -9,7 +8,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-/// A local future: an application chooses its executor and thread policy.
+/// A future the application's executor drives on the calling thread.
 pub type LocalFuture<'a, T> = Pin<Box<dyn Future<Output = T> + 'a>>;
 
 pub(crate) trait AsyncAction: Send + Sync {
@@ -23,11 +22,11 @@ where
         Box::pin(self(ctx))
     }
 }
-pub(crate) trait AsyncMiddleware: Send + Sync {
+pub(crate) trait AsyncStep: Send + Sync {
     fn call<'a>(&'a self, ctx: &'a mut Context, next: AsyncNext<'a>)
     -> LocalFuture<'a, Result<()>>;
 }
-impl<F> AsyncMiddleware for F
+impl<F> AsyncStep for F
 where
     F: for<'a> AsyncFn(&'a mut Context, AsyncNext<'a>) -> Result<()> + Send + Sync,
 {
@@ -48,7 +47,7 @@ pub(crate) enum Action {
 pub(crate) enum Step {
     Middleware(Middleware),
     Derive(SyncAction),
-    Async(Arc<dyn AsyncMiddleware>),
+    Async(Arc<dyn AsyncStep>),
 }
 pub(crate) fn async_required() -> CliError {
     CliError::new(
@@ -79,8 +78,7 @@ pub(crate) fn validate_async(steps: &[Step], action: Option<&Action>) -> Result<
     Ok(())
 }
 
-/// A consuming asynchronous continuation. Dropping it short-circuits the chain.
-/// Synchronous actions and derives also work under asynchronous middleware.
+/// The remaining steps and the action; dropping it skips them.
 ///
 /// ```compile_fail
 /// use fujo::Command;

@@ -1,4 +1,3 @@
-/** Generate behavior fixtures from the unmodified TypeScript checkout. */
 import { execFileSync } from 'node:child_process';
 import { resolve as resolvePath } from 'node:path';
 import { parse } from '../../dreamcli/src/core/parse/index.ts';

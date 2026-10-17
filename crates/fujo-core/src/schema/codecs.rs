@@ -212,7 +212,7 @@ pub(super) fn parse_bytes(raw: &Value) -> Result<f64> {
     }
     let text = raw.as_str().ok_or_else(fail)?;
     let (number, suffix) = decimal_prefix(text).ok_or_else(fail)?;
-    let power = match suffix.trim_start().to_lowercase().as_str() {
+    let power = match suffix.trim().to_lowercase().as_str() {
         "" | "b" => 0,
         "kb" => 1,
         "mb" => 2,
@@ -224,7 +224,6 @@ pub(super) fn parse_bytes(raw: &Value) -> Result<f64> {
     if n.is_finite() { Ok(n) } else { Err(fail()) }
 }
 
-/// Match the decimal grammar shared by durations and sizes without regex.
 fn decimal_prefix(text: &str) -> Option<(&str, &str)> {
     let mut end = text.bytes().take_while(u8::is_ascii_digit).count();
     if end == 0 {
@@ -316,15 +315,13 @@ pub(super) fn parse_number(text: &str) -> std::result::Result<f64, ()> {
 }
 
 #[cfg(all(test, feature = "regex"))]
-mod migration_tests {
+mod grammar_tests {
     use super::*;
 
     #[test]
-    fn duration_and_size_scanners_preserve_the_previous_accepted_grammar() {
-        // Retain the old regex grammar as an independent oracle for the scanner
-        // migration, including whitespace, case folding, partials, and overflow.
+    fn duration_and_size_scanners_match_the_reference_regex_grammar() {
         let duration = Regex::new(r"^(?:\d+(?:\.\d+)?|(?:\d+(?:\.\d+)?(?:ms|s|m|h|d))+)$").unwrap();
-        let bytes = Regex::new(r"(?i)^(\d+(?:\.\d+)?)\s*(b|kb|mb|gb|tb)?$").unwrap();
+        let bytes = Regex::new(r"(?i)^(\d+(?:\.\d+)?)\s*(b|kb|mb|gb|tb)?\s*$").unwrap();
         for number in [
             "", "0", "01", "12", "1.5", ".5", "1.", "+1", "-1", "1e3", "١",
         ] {
@@ -368,7 +365,7 @@ mod migration_tests {
 
     #[cfg(feature = "chrono")]
     #[test]
-    fn iso_shape_preserves_the_previous_grammar_and_handles_truncated_input() {
+    fn iso_date_shape_matches_the_reference_regex_for_truncated_input() {
         let old = Regex::new(
             r"^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})?)?$",
         )

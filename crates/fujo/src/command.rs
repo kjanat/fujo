@@ -7,6 +7,8 @@ use crate::schema::ArgMarker;
 use crate::schema::FlagMarker;
 use crate::schema::Input;
 use crate::schema::Presence;
+use crate::typed::ActionInfo;
+use crate::typed::Pipeline;
 use crate::typed::StageInfo;
 use crate::typed::StageKind;
 pub use fujo_core::command::CommandSchema;
@@ -87,7 +89,7 @@ pub(crate) use crate::execution::Action;
 pub use crate::execution::AsyncNext;
 pub(crate) use crate::execution::Step;
 
-/// Calling `run` executes the remainder once; dropping it short-circuits the action.
+/// Calling `run` executes the remainder once; dropping it skips the action.
 pub struct Next<'a> {
     pub(crate) steps: &'a [Step],
     pub(crate) action: Option<&'a Action>,
@@ -124,6 +126,8 @@ pub struct Command {
     pub(crate) children: Vec<Command>,
     pub(crate) steps: Vec<Step>,
     pub(crate) stages: Vec<StageInfo>,
+    pub(crate) typed: Vec<StageInfo>,
+    pub(crate) action_info: Option<ActionInfo>,
     pub(crate) action: Option<Action>,
     pub(crate) interactive: Option<crate::resolve::Interactive>,
 }
@@ -149,6 +153,8 @@ pub fn command(name: &str) -> Command {
         children: vec![],
         steps: vec![],
         stages: vec![],
+        typed: vec![],
+        action_info: None,
         action: None,
         interactive: None,
     }
@@ -163,9 +169,14 @@ impl Command {
     pub fn schema(&self) -> &CommandSchema {
         &self.schema
     }
-    /// Dynamic steps and typed stages in execution order; the action is not listed.
-    pub fn stages(&self) -> &[StageInfo] {
-        &self.stages
+    /// Dynamic steps, then typed stages, in execution order.
+    pub fn stages(&self) -> Vec<StageInfo> {
+        let mut stages = self.stages.clone();
+        stages.extend(self.typed.iter().cloned());
+        stages
+    }
+    pub fn action_info(&self) -> Option<ActionInfo> {
+        self.action_info
     }
     pub fn describe(mut self, description: impl Into<String>) -> Self {
         self.schema.description = description.into();
@@ -206,15 +217,30 @@ impl Command {
         mut self,
         action: impl Fn(&mut Context) -> Result<()> + Send + Sync + 'static,
     ) -> Self {
+        self.action_info = Some(ActionInfo {
+            handler: type_name_of_val(&action),
+            asynchronous: false,
+        });
         self.action = Some(Action::Sync(Arc::new(action)));
         self
     }
-    /// Register an async closure without selecting an executor.
     pub fn action_async(
         mut self,
         action: impl for<'a> AsyncFn(&'a mut Context) -> Result<()> + Send + Sync + 'static,
     ) -> Self {
+        self.action_info = Some(ActionInfo {
+            handler: type_name_of_val(&action),
+            asynchronous: true,
+        });
         self.action = Some(Action::Async(Arc::new(action)));
+        self
+    }
+    /// Run a pipeline once before this command or any child and keep its state
+    /// for stages that call `shared`. The pipeline's inputs are registered here.
+    pub fn share<G, S: Send + 'static, M>(mut self, pipeline: &Pipeline<G, S, M>) -> Self {
+        self.declare(pipeline.declared());
+        self.stages.extend(pipeline.stages());
+        self.steps.push(pipeline.step());
         self
     }
     pub fn interactive(
@@ -242,7 +268,6 @@ impl Command {
         self.steps.push(Step::Middleware(Arc::new(middleware)));
         self
     }
-    /// Async middleware owns its continuation; await it at most once.
     pub fn middleware_async(
         mut self,
         middleware: impl for<'a> AsyncFn(&'a mut Context, AsyncNext<'a>) -> Result<()>

@@ -1,4 +1,3 @@
-//! Nested settings inspection with source provenance, explicit stdin, and redacted credentials.
 use fujo::Cli;
 use fujo::CliError;
 use fujo::Command;
@@ -125,6 +124,6 @@ struct Effective {
     address: String,
     authenticated: bool,
 }
-fn main() -> std::process::ExitCode {
+pub fn main() -> std::process::ExitCode {
     app().run()
 }

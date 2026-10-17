@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-"""Compile isolated features and assert their normal dependency boundaries."""
-
 import subprocess
 from pathlib import Path
 

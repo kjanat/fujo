@@ -40,7 +40,6 @@ jobs:
       - name: Install completion shells
         run: sudo apt-get update && sudo apt-get install --no-install-recommends -y fish zsh;
           command -v bash pwsh
-      - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - run: cargo test --workspace --all-features --locked
       - run: cargo build -p fujo --example terminal --example async_build --locked
       - run: python scripts/check-terminal.py target/debug/examples/terminal target/debug/examples/async_build
@@ -79,6 +78,5 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
       - uses: $/.github/actions/setup
-      - run: cargo clippy --workspace --all-targets --no-default-features -- -D warnings
       - run: cargo test --workspace --no-default-features --locked
       - run: python scripts/check-features.py

@@ -1,4 +1,3 @@
-/** Generate orchestration expectations from the recorded TypeScript revision. */
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';

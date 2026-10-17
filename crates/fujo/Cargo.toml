@@ -43,13 +43,12 @@ name              = "manifest"
 required-features = ["completion"]
 
 [dependencies]
-fujo-complete           = { workspace = true, optional = true }
-fujo-core.workspace     = true
-fujo-output.workspace   = true
-rpassword               = { version = "7", optional = true }
-serde.workspace         = true
-serde_json.workspace    = true
-unicode-width.workspace = true
+fujo-complete         = { workspace = true, optional = true }
+fujo-core.workspace   = true
+fujo-output.workspace = true
+rpassword             = { version = "7", optional = true }
+serde.workspace       = true
+serde_json.workspace  = true
 
 [dev-dependencies]
 tempfile.workspace = true

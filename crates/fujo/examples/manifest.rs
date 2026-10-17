@@ -1,6 +1,6 @@
-//! Fingerprint a directory tree into a manifest, then detect drift against it.
 use fujo::Arg;
 use fujo::AsyncMiddleware;
+use fujo::Builtins;
 use fujo::Cli;
 use fujo::CliError;
 use fujo::Command;
@@ -69,7 +69,7 @@ pub fn app() -> Cli {
                 if jobs.get() <= 64 {
                     Ok(())
                 } else {
-                    Err(CliError::validation("INVALID_JOBS", "Use 1–64 jobs"))
+                    Err(CliError::validation("INVALID_JOBS", "Use 1-64 jobs"))
                 }
             })
             .encode_json(|jobs| json!(jobs.get()))
@@ -88,11 +88,16 @@ pub fn app() -> Cli {
             .path_checks(PathChecks::directory())
             .describe("Directory to fingerprint")
     };
+    let workers = fujo::pipeline(globals.clone())
+        .derive(|_, GlobalValues { jobs, .. }, ()| Ok(Arc::new(Semaphore::new(jobs.get()))));
     let scanner = fujo::pipeline(ScanInputs {
         globals: globals.clone(),
         root: root(),
     })
-    .derive(|ctx, ScanValues { globals, root }, ()| scan(ctx, root, globals.ignore))
+    .shared(&workers)
+    .derive(|ctx, ScanValues { globals, root }, workers| {
+        Ok((workers, scan(ctx, root, globals.ignore)?))
+    })
     .wrap_async(Timed);
     let build = Command::new("build")
         .describe("Fingerprint every file under a directory into a manifest")
@@ -119,8 +124,8 @@ pub fn app() -> Cli {
             Ok(())
         })
         .inherit(&scanner)
-        .derive_async(async |ctx, BuildValues { globals, root, .. }, files| {
-            fingerprint_all(ctx, root, files, *globals.jobs).await
+        .derive_async(async |ctx, BuildValues { root, .. }, (workers, files)| {
+            fingerprint_all(ctx, root, files, workers).await
         })
         .action(|ctx, BuildValues { out, .. }, manifest| {
             std::fs::write(out, serde_json::to_vec_pretty(manifest)?)?;
@@ -133,7 +138,7 @@ pub fn app() -> Cli {
                 }))
             } else {
                 ctx.out.log(format!(
-                    "{} files, {bytes} bytes → {}",
+                    "{} files, {bytes} bytes -> {}",
                     manifest.files.len(),
                     out.display()
                 ));
@@ -158,15 +163,9 @@ pub fn app() -> Cli {
         })
         .inherit(&scanner)
         .derive_async(
-            async |ctx,
-                   VerifyValues {
-                       globals,
-                       root,
-                       manifest,
-                   },
-                   files| {
+            async |ctx, VerifyValues { root, manifest, .. }, (workers, files)| {
                 let recorded: Manifest = serde_json::from_slice(&std::fs::read(manifest)?)?;
-                let current = fingerprint_all(ctx, root, files, *globals.jobs).await?;
+                let current = fingerprint_all(ctx, root, files, workers).await?;
                 Ok(recorded.compare(current))
             },
         )
@@ -202,7 +201,12 @@ pub fn app() -> Cli {
     Cli::new("manifest")
         .version(env!("CARGO_PKG_VERSION"))
         .describe("Fingerprint directories and detect drift")
+        .builtins(Builtins {
+            explain: true,
+            ..Builtins::default()
+        })
         .inputs(globals)
+        .share(&workers)
         .config(ConfigSettings::new("manifest"))
         .command(build)
         .command(verify)
@@ -233,19 +237,20 @@ fn scan(ctx: Scope<'_>, root: &Path, ignore: &[String]) -> fujo::Result<Vec<Path
     Ok(files)
 }
 
+type Scanned = (Arc<Semaphore>, Vec<PathBuf>);
 struct Timed;
-impl<I: InputSet> AsyncMiddleware<I, Vec<PathBuf>> for Timed {
+impl<I: InputSet> AsyncMiddleware<I, Scanned> for Timed {
     fn call<'a>(
         &'a self,
         ctx: Scope<'a>,
         _: I::Values<'a>,
-        files: Vec<PathBuf>,
-        next: AsyncNext<'a, Vec<PathBuf>>,
+        scanned: Scanned,
+        next: AsyncNext<'a, Scanned>,
     ) -> LocalFuture<'a, fujo::Result<()>> {
         Box::pin(async move {
             let started = Instant::now();
-            let count = files.len();
-            let result = next.run(files).await;
+            let count = scanned.1.len();
+            let result = next.run(scanned).await;
             ctx.out.status(format!(
                 "Processed {count} files in {:.2?}",
                 started.elapsed()
@@ -259,10 +264,9 @@ async fn fingerprint_all(
     ctx: Scope<'_>,
     root: &Path,
     files: Vec<PathBuf>,
-    jobs: NonZeroUsize,
+    permits: Arc<Semaphore>,
 ) -> fujo::Result<Manifest> {
     let mut progress = ctx.out.progress("Fingerprinting", files.len() as u64);
-    let permits = Arc::new(Semaphore::new(jobs.get()));
     let mut tasks = JoinSet::new();
     for path in files {
         let permits = permits.clone();
@@ -379,6 +383,6 @@ impl Report {
 }
 
 #[tokio::main(flavor = "current_thread")]
-async fn main() -> std::process::ExitCode {
+pub async fn main() -> std::process::ExitCode {
     app().run_async().await
 }

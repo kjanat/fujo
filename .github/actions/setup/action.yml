@@ -7,10 +7,12 @@ inputs:
 runs:
   using: composite
   steps:
-    - uses: kjanat/runner@master
+    - uses: kjanat/runner@b32ea932a1813ae0be44e755c16df9f9f5ca86a4 # v0.28.0
     - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
       with: { python-version-file: "${{ inputs.workspace }}/.python-version" }
     - id: version
       shell: bash
       env: { RUNNER_DIR: "${{ inputs.workspace }}" }
       run: run rustup toolchain install
+    - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      with: { workspaces: "${{ inputs.workspace }}" }

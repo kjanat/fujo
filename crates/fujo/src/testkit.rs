@@ -1,4 +1,3 @@
-//! In-process harness uses exactly the same executor as native CLI runs.
 use crate::Builtins;
 use crate::Cli;
 use crate::Command;
@@ -28,7 +27,6 @@ pub fn run_command_with_builtins(
         .default(command)
         .execute(argv, options)
 }
-/// Test the complete configured application, including plugins and builtins.
 pub fn run_cli(
     app: &Cli,
     argv: impl IntoIterator<Item = impl Into<String>>,

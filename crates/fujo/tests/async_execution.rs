@@ -1,9 +1,13 @@
+#[path = "support/guard.rs"]
+mod guard;
+#[path = "support/hooks.rs"]
+mod hooks;
+#[path = "support/prompter.rs"]
+mod prompter;
 mod support;
 use fujo::Cli;
 use fujo::CliError;
 use fujo::Command;
-use fujo::Context;
-use fujo::Plugin;
 use fujo::Result;
 use fujo::RunOptions;
 use fujo::output::ActivityEvent;
@@ -11,6 +15,8 @@ use fujo::output::Output;
 use fujo::output::OutputOptions;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering;
 
 #[test]
 fn async_middleware_wraps_sync_derives_async_derives_and_actions_in_order() {
@@ -129,40 +135,12 @@ fn help_version_and_completions_do_not_require_async_execution() {
         let sync = app.execute(args.clone(), RunOptions::default());
         let asynchronous = support::run(app.execute_async(args, RunOptions::default()));
         assert!(sync.success());
+        assert!(asynchronous.success());
         assert_eq!(sync.stdout, asynchronous.stdout);
         assert!(sync.activities.is_empty());
     }
 }
 
-#[derive(Clone)]
-struct Hooks {
-    events: Arc<Mutex<Vec<String>>>,
-    fail: &'static str,
-}
-impl Hooks {
-    fn record(&self, stage: &str) -> Result<()> {
-        self.events.lock().unwrap().push(stage.into());
-        if self.fail == stage {
-            Err(CliError::new("PLUGIN_FAILURE", stage))
-        } else {
-            Ok(())
-        }
-    }
-}
-impl Plugin for Hooks {
-    fn before_parse(&self, _: &mut Vec<String>) -> Result<()> {
-        self.record("parse")
-    }
-    fn before_execute(&self, _: &mut Context) -> Result<()> {
-        self.record("before")
-    }
-    fn after_execute(&self, _: &Context) -> Result<()> {
-        self.record("after")
-    }
-    fn on_error(&self, _: &CliError) {
-        self.events.lock().unwrap().push("error".into());
-    }
-}
 #[test]
 fn plugin_hooks_and_failures_share_the_same_lifecycle_in_both_executors() {
     for asynchronous in [false, true] {
@@ -187,7 +165,7 @@ fn plugin_hooks_and_failures_share_the_same_lifecycle_in_both_executors() {
                 })
             };
             let app = Cli::new("demo")
-                .plugin(Hooks {
+                .plugin(hooks::Hooks {
                     events: events.clone(),
                     fail,
                 })
@@ -246,18 +224,12 @@ fn dropping_a_suspended_execution_drops_state_and_activity_handles() {
         tty: true,
         ..Default::default()
     });
-    let dropped = Arc::new(Mutex::new(false));
-    struct Guard(Arc<Mutex<bool>>);
-    impl Drop for Guard {
-        fn drop(&mut self) {
-            *self.0.lock().unwrap() = true;
-        }
-    }
+    let dropped = Arc::new(AtomicUsize::new(0));
     let count = dropped.clone();
     let app = Cli::new("demo").default(
         Command::new("demo")
             .inputs(())
-            .derive(move |_, (), ()| Ok(Guard(count.clone())))
+            .derive(move |_, (), ()| Ok(guard::Guard(count.clone())))
             .action_async(async |ctx, (), _guard| {
                 let _activity = ctx.out.spinner("suspended");
                 std::future::pending::<()>().await;
@@ -277,9 +249,9 @@ fn dropping_a_suspended_execution_drops_state_and_activity_handles() {
         Poll::Pending
     ));
     assert_eq!(output.events().len(), 1);
-    assert!(!*dropped.lock().unwrap());
+    assert_eq!(dropped.load(Ordering::SeqCst), 0);
     drop(future);
-    assert!(*dropped.lock().unwrap());
+    assert_eq!(dropped.load(Ordering::SeqCst), 1);
     assert!(matches!(
         &output.events()[..],
         [
@@ -295,7 +267,6 @@ fn dropping_a_suspended_execution_drops_state_and_activity_handles() {
 fn prompt_abort_precedes_sync_async_selection_and_never_starts_actions() {
     use fujo::prompt::Answer;
     use fujo::prompt::Prompt;
-    use fujo::prompt::TestPrompter;
     let app = Cli::new("demo").default(
         Command::new("demo")
             .inputs(
@@ -306,8 +277,7 @@ fn prompt_abort_precedes_sync_async_selection_and_never_starts_actions() {
             .action_async(async |_, _, ()| panic!("aborted invocation must not start")),
     );
     for asynchronous in [false, true] {
-        let mut options = RunOptions::default();
-        options.resolve.prompter = Some(Arc::new(TestPrompter::new([Answer::Cancel])));
+        let options = prompter::prompted([Answer::Cancel]);
         let result = if asynchronous {
             support::run(app.execute_async(Vec::<String>::new(), options))
         } else {
