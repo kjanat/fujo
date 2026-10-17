@@ -85,3 +85,53 @@ Keep OS access in the public crate's `Runtime` implementations. Core resolution
 receives explicit capabilities. Native values live behind typed handles; JSON is
 used for config, prompt interchange, and schema metadata. Keep output independent
 of core parsing and resolution.
+
+## Publishing to crates.io
+
+Pushing a `vVERSION` tag triggers `.github/workflows/publish.yml`. The tag must
+match `[workspace.package].version`, every publishable member's version, and
+its internal dependency requirements. The tagged commit must belong to `master`.
+Stable tags such as `v0.1.0` and prerelease tags such as `v0.2.0-rc.1` both work.
+
+The workflow runs the full CI suite on the tagged commit, including packaging
+and building all five crates. After those checks pass, Cargo publishes the
+workspace in dependency order: `fujo-error` before `fujo-core` and `fujo-output`,
+then `fujo-complete` after core, and `fujo` last. Publishing runs are serialized
+and an active publication is not cancelled by a newer tag.
+
+Publishing uses GitHub OIDC and `rust-lang/crates-io-auth-action` to obtain a
+short-lived crates.io token. Only the publish job has `id-token: write`; no
+`CARGO_REGISTRY_TOKEN` repository secret is required.
+
+Configure a GitHub trusted publisher on crates.io for each of `fujo-error`,
+`fujo-core`, `fujo-output`, `fujo-complete`, and `fujo`:
+
+- Repository owner: `kjanat`
+- Repository name: `fujo`
+- Workflow filename: `publish.yml`
+- Environment: leave empty (this workflow does not select an environment)
+
+The [crates.io setup guide](https://crates.io/docs/trusted-publishing) describes
+the first-publication prerequisite: publish a new crate once with an API token
+before configuring its trusted publisher. Bootstrap all five crates from the
+reviewed release commit, then configure OIDC for subsequent tagged releases.
+Do not add that bootstrap token to the workflow.
+
+Release validation and its tests live in `.github/actions/check-release/`.
+The composite action locates its Python files through `GITHUB_ACTION_PATH`
+and validates the selected Cargo workspace.
+
+For each release:
+
+1. Update the shared version in `Cargo.toml` and the four internal dependency
+   versions in `[workspace.dependencies]`, then update `Cargo.lock`.
+2. Run `python3 .github/actions/check-release/check-release.py --tag vVERSION` and
+   `cargo publish --workspace --dry-run --locked --all-features --registry crates-io`.
+3. Merge the release changes into `master` and verify CI and the target commit's
+   signature before creating and pushing the matching tag.
+4. Check the **Publish crates** workflow and the published versions on crates.io.
+
+Publication is not atomic across crates. If an upload fails after earlier
+crates were published, inspect the registry state before recovery: existing
+versions cannot be overwritten, and blindly rerunning the whole workspace can
+fail on those versions. Do not move a published release tag.
