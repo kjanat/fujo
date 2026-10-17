@@ -226,7 +226,7 @@ mod completion {
         let program = app().config(fujo::config::ConfigSettings::new("demo"));
         let bash = generate(program.schema(), Shell::Bash);
         assert!(
-            bash.contains("      'db seed:--config') skip=1; continue ;;\n"),
+            bash.contains("      'db seed:--config') skip=1; pending=\"$token\"; continue ;;\n"),
             "{bash}"
         );
         assert!(
@@ -237,20 +237,20 @@ mod completion {
         );
         assert!(
             bash.contains(
-                "    'db:--config')\n      [[ -z $prefix ]] && compopt -o filenames 2>/dev/null\n      mapfile -t COMPREPLY"
+                "    'db:--config')\n      compopt -o filenames 2>/dev/null\n      mapfile -t COMPREPLY"
             ),
             "{bash}"
         );
         let zsh = generate(program.schema(), Shell::Zsh);
         assert!(
             zsh.contains(
-                "    'db:--config')\n      [[ -n $prefix ]] && compset -P \"$prefix\"\n      _files; return ;;\n"
+                "    'db:--config')\n      [[ -n $prefix ]] && compset -P \"${(b)prefix}\"\n      _files; return\n      ;;\n"
             ),
             "{zsh}"
         );
         let fish = generate(program.schema(), Shell::Fish);
         assert!(
-            fish.contains("      case 'db:--config'\n        set skip 1\n        continue\n"),
+            fish.contains("      case 'db:--config'\n        set skip 1\n        set pending $token\n        continue\n"),
             "{fish}"
         );
         assert!(
@@ -265,7 +265,7 @@ mod completion {
         );
         let powershell = generate(program.schema(), Shell::PowerShell);
         assert!(
-            powershell.contains("      'db:--config' { $skip = $true }\n"),
+            powershell.contains("      'db:--config' { $skip = $true; $pending = $token }\n"),
             "{powershell}"
         );
         assert!(
@@ -291,7 +291,7 @@ mod completion {
         for shell in [Shell::Bash, Shell::Zsh] {
             let script = generate(program.schema(), shell);
             assert!(
-                script.contains("      'pack:--cache') skip=1; continue ;;\n"),
+                script.contains("      'pack:--cache') skip=1; pending=\"$token\"; continue ;;\n"),
                 "{script}"
             );
             assert!(!script.contains("'pack:--no-cache') skip=1"), "{script}");
@@ -331,7 +331,7 @@ mod completion {
     fn bash_reassembles_readline_words_before_matching() {
         let bash = generate(app().schema(), Shell::Bash);
         assert!(bash.contains("_comp_get_words -n =: cur prev words cword"));
-        assert!(bash.contains("[[ $COMP_WORDBREAKS == *=* ]] && prefix=''"));
+        assert!(bash.contains("[[ $COMP_WORDBREAKS == *\"$char\"* ]] && discard=\"$part\""));
         let zsh = generate(app().schema(), Shell::Zsh);
         assert!(!zsh.contains("COMP_WORDBREAKS"));
     }

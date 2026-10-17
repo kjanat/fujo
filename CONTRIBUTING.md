@@ -13,8 +13,9 @@ cargo doc --workspace --all-features --no-deps
 ```
 
 The `shell-tests` feature runs external completion tests. It requires Bash, Zsh,
-Fish, and PowerShell (`pwsh`) on PATH. Ordinary workspace tests use no external
-shell dependencies. `--all-targets` also compiles and tests the examples; run the
+Fish, PowerShell (`pwsh`), and Python 3 (`python3`) on PATH. The Zsh line-editor
+checks use Unix PTYs through Python's standard library. Ordinary workspace tests
+use no external shell dependencies. `--all-targets` also compiles and tests the examples; run the
 doctests with ordinary `cargo test` because `--all-targets` excludes them.
 
 The CI workflow runs these core gates on Linux, macOS, and Windows. A separate

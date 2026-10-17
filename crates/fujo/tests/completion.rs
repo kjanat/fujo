@@ -492,3 +492,246 @@ fn fish_does_not_treat_a_flag_operand_as_a_subcommand() {
             .any(|line| line == "seed" || line.starts_with("seed\t"))
     );
 }
+
+#[cfg(feature = "shell-tests")]
+fn review_app() -> fujo::Cli {
+    use fujo::{arg, value};
+    cli("demo")
+        .command(
+            command("hiddenarg")
+                .arg(arg::string("secret").hidden())
+                .arg(arg::enumeration("mode", ["fast", "slow"])),
+        )
+        .command(
+            command("flags")
+                .flag(flag::string("internal").hidden().alias("i"))
+                .flag(flag::boolean("verbose").alias("v"))
+                .flag(flag::path("out").alias("o").hidden_alias("x"))
+                .flag(flag::enumeration("speed", ["fast", "slow"]).alias("s"))
+                .flag(
+                    flag::parse::<bool>("cache")
+                        .negatable()
+                        .alias("c")
+                        .negated_name("N"),
+                )
+                .arg(arg::enumeration("mode", ["fast", "slow"]))
+                .arg(arg::enumeration("next", ["foo", "bar"])),
+        )
+        .command(
+            command("collections")
+                .flag(flag::boolean("verbose").alias("v"))
+                .flag(flag::key_value_of("dest", value::path()).alias("d"))
+                .flag(flag::key_value_of("mode", value::enumeration(["fast", "slow"])).alias("m"))
+                .flag(
+                    flag::array("paths", value::path())
+                        .separator(fujo::delimiter!("::"))
+                        .alias("p"),
+                )
+                .flag(
+                    flag::array("modes", value::enumeration(["fast", "slow"]))
+                        .separator(fujo::delimiter!("::")),
+                )
+                .arg(
+                    arg::enumeration("items", ["fast", "slow"])
+                        .variadic()
+                        .separator(fujo::delimiter!("::")),
+                ),
+        )
+}
+
+#[cfg(feature = "shell-tests")]
+fn review_results(shell: Shell, cases: &[&[&str]]) -> Vec<Vec<String>> {
+    let dir = workspace();
+    let script = generate(review_app().schema(), shell);
+    if shell == Shell::Zsh {
+        let checker = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../scripts/check-completion-zsh.py");
+        let output = run_in(
+            dir.path(),
+            "python3",
+            &[checker.to_str().unwrap()],
+            &serde_json::to_string(&(script, cases)).unwrap(),
+        );
+        return serde_json::from_str(&output).unwrap();
+    }
+    let quote = |value: &str| format!("'{}'", value.replace('\'', "'\\''"));
+    let mut probe = script;
+    for words in cases {
+        match shell {
+            Shell::Bash => {
+                let argv = words
+                    .iter()
+                    .map(|word| quote(word))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                probe.push_str(&format!("\necho '==CASE'; COMP_WORDBREAKS=' '; COMP_WORDS=({argv}); COMP_CWORD={}; COMPREPLY=(); _demo_complete; printf '%s\\n' \"${{COMPREPLY[@]}}\"\n", words.len()-1));
+            }
+            Shell::Fish => {
+                let line = words.join(" ");
+                probe.push_str(&format!("\necho '==CASE'; complete -C {}\n", quote(&line)));
+            }
+            Shell::PowerShell => {
+                let line = words.join(" ").replace('\'', "''");
+                probe.push_str(&format!("\n'==CASE'; $t='{line}'; [System.Management.Automation.CommandCompletion]::CompleteInput($t,$t.Length,$null).CompletionMatches | ForEach-Object CompletionText\n"));
+            }
+            Shell::Zsh => unreachable!(),
+        }
+    }
+    let output = match shell {
+        Shell::Bash => run_in(dir.path(), "bash", &["--noprofile", "--norc"], &probe),
+        Shell::Fish => run_in(dir.path(), "fish", &["--no-config"], &probe),
+        Shell::PowerShell => run_powershell_in(dir.path(), &probe),
+        Shell::Zsh => unreachable!(),
+    };
+    output
+        .split("==CASE\n")
+        .skip(1)
+        .map(|section| {
+            section
+                .lines()
+                .filter(|line| !line.is_empty())
+                .map(|line| {
+                    line.split('\t')
+                        .next()
+                        .unwrap()
+                        .replace('\\', "/")
+                        .replace("./", "")
+                })
+                .collect()
+        })
+        .collect()
+}
+
+#[cfg(feature = "shell-tests")]
+fn assert_review_completions(cases: &[&[&str]], expected: &[&str]) {
+    assert_eq!(cases.len(), expected.len());
+    for shell in [Shell::Bash, Shell::Zsh, Shell::Fish, Shell::PowerShell] {
+        let results = review_results(shell, cases);
+        assert_eq!(results.len(), cases.len(), "{shell:?}: {results:?}");
+        for ((case, actual), expected) in cases.iter().zip(results).zip(expected) {
+            if expected.is_empty() {
+                assert!(
+                    actual.is_empty()
+                        || (shell == Shell::PowerShell
+                            && actual == [case.last().unwrap().to_string()]),
+                    "{shell:?} {case:?}: {actual:?}"
+                );
+            } else {
+                assert_eq!(actual, [*expected], "{shell:?} {case:?}");
+            }
+        }
+    }
+}
+
+#[test]
+#[cfg(feature = "shell-tests")]
+fn hidden_inputs_participate_in_completion_state_without_being_suggested() {
+    assert_review_completions(
+        &[
+            &["demo", "hiddenarg", "f"],
+            &["demo", "hiddenarg", "secret", "f"],
+            &["demo", "flags", "--internal", "value", "f"],
+            &["demo", "flags", "-i", "value", "f"],
+            &["demo", "flags", "-x", "input.txt", "f"],
+            &["demo", "flags", "--internal", "f"],
+            &["demo", "flags", "--int"],
+            &["demo", "flags", "-x"],
+        ],
+        &["", "fast", "fast", "fast", "fast", "", "", ""],
+    );
+}
+
+#[test]
+#[cfg(feature = "shell-tests")]
+fn short_clusters_consume_attached_and_separate_operands() {
+    assert_review_completions(
+        &[
+            &["demo", "flags", "-vo", "input.txt", "f"],
+            &["demo", "flags", "-voinput.txt", "f"],
+            &["demo", "flags", "-vi", "value", "f"],
+            &["demo", "flags", "-vovalue", "f"],
+            &["demo", "flags", "-vs", "f"],
+            &["demo", "flags", "-vsf"],
+            &["demo", "flags", "-v", "f"],
+            &["demo", "flags", "-vc", "true", "f"],
+            &["demo", "flags", "-vN", "f"],
+            &["demo", "flags", "--o", "input.txt", "f"],
+            &["demo", "flags", "--", "-vo", "f"],
+        ],
+        &[
+            "fast", "fast", "fast", "fast", "fast", "-vsfast", "fast", "fast", "fast", "fast",
+            "foo",
+        ],
+    );
+}
+
+#[test]
+#[cfg(feature = "shell-tests")]
+fn collection_completions_preserve_keys_and_prior_elements() {
+    assert_review_completions(
+        &[
+            &["demo", "collections", "--dest", "output=in"],
+            &["demo", "collections", "--dest=output=in"],
+            &["demo", "collections", "--mode", "output=f"],
+            &["demo", "collections", "--mode=output=f"],
+            &["demo", "collections", "--paths", "old::in"],
+            &["demo", "collections", "--paths=old::in"],
+            &["demo", "collections", "--modes", "slow::f"],
+            &["demo", "collections", "slow::f"],
+            &["demo", "collections", "--", "slow::f"],
+            &["demo", "collections", "-vmoutput=f"],
+            &["demo", "collections", "--mode", "output"],
+        ],
+        &[
+            "output=input.txt",
+            "--dest=output=input.txt",
+            "output=fast",
+            "--mode=output=fast",
+            "old::input.txt",
+            "--paths=old::input.txt",
+            "slow::fast",
+            "slow::fast",
+            "slow::fast",
+            "-vmoutput=fast",
+            "",
+        ],
+    );
+}
+
+#[test]
+#[cfg(feature = "shell-tests")]
+fn collection_completion_handles_empty_elements_and_literal_delimiters() {
+    for shell in [Shell::Bash, Shell::Fish, Shell::PowerShell] {
+        let results = review_results(
+            shell,
+            &[
+                &["demo", "collections", "--mode", "output="],
+                &["demo", "collections", "--modes", "slow::"],
+                &["demo", "collections", "--paths", "old::::in"],
+            ],
+        );
+        assert_eq!(results[0], ["output=fast", "output=slow"], "{shell:?}");
+        assert_eq!(results[1], ["slow::fast", "slow::slow"], "{shell:?}");
+        assert_eq!(results[2], ["old::::input.txt"], "{shell:?}");
+    }
+}
+
+#[test]
+#[cfg(feature = "shell-tests")]
+fn bash_collection_completion_respects_readline_word_breaks() {
+    let dir = workspace();
+    let script = generate(review_app().schema(), Shell::Bash);
+    let probe = format!(
+        r#"{script}
+COMP_WORDBREAKS=' =:'
+COMP_WORDS=(demo collections --dest output = in); COMP_CWORD=5
+_demo_complete; printf '%s\n' "${{COMPREPLY[@]}}"
+COMP_WORDS=(demo collections --mode = output = f); COMP_CWORD=6
+_demo_complete; printf '%s\n' "${{COMPREPLY[@]}}"
+COMP_WORDS=(demo collections --paths old : : in); COMP_CWORD=6
+_demo_complete; printf '%s\n' "${{COMPREPLY[@]}}"
+"#
+    );
+    let output = run_in(dir.path(), "bash", &["--noprofile", "--norc"], &probe);
+    assert_eq!(output, "input.txt\nfast\ninput.txt\n");
+}
