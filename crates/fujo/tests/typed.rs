@@ -1349,6 +1349,44 @@ fn conflicting_declarations_of_one_name_are_schema_errors() {
         .error
         .unwrap();
     assert_eq!(error.code, "INVALID_SCHEMA");
+    let child = || {
+        Command::new("serve")
+            .inputs(flag::parse::<u16>("port"))
+            .action(|_, _, ()| panic!("action must not execute"))
+    };
+    let error = Cli::new("demo")
+        .share(&text)
+        .command(child())
+        .execute(["serve", "--port=80"], RunOptions::default())
+        .error
+        .unwrap();
+    assert_eq!(
+        error.message,
+        "Input 'port' is declared with conflicting types"
+    );
+    let error = Cli::new("demo")
+        .command(Command::new("net").share(&text).command(child()))
+        .execute(["net", "serve", "--port=80"], RunOptions::default())
+        .error
+        .unwrap();
+    assert_eq!(
+        error.message,
+        "Input 'port' is declared with conflicting types"
+    );
+    let result = Cli::new("demo")
+        .command(
+            Command::new("net").share(&number).command(
+                Command::new("serve")
+                    .inputs(flag::parse::<u16>("port"))
+                    .action(|ctx, port, ()| {
+                        ctx.out.log(format!("{port:?}"));
+                        Ok(())
+                    }),
+            ),
+        )
+        .execute(["net", "serve", "--port=80"], RunOptions::default());
+    assert!(result.success(), "{:?}", result.error);
+    assert_eq!(result.stdout, "Some(80)\n");
 }
 
 #[test]

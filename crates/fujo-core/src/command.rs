@@ -219,7 +219,12 @@ impl CommandSchema {
 pub fn with_flags(mut schema: CommandSchema, inherited: &[InputSchema]) -> CommandSchema {
     let mut flags: Vec<_> = inherited
         .iter()
-        .filter(|f| !schema.flags.iter().any(|local| local.name == f.name))
+        .filter(|f| {
+            schema
+                .flags
+                .iter()
+                .all(|local| local.name != f.name || local.conflicts_with(f))
+        })
         .cloned()
         .collect();
     flags.extend(schema.flags);

@@ -297,7 +297,8 @@ impl InputSchema {
     }
     pub fn conflicts_with(&self, other: &InputSchema) -> bool {
         self.name == other.name
-            && (self.surface != other.surface || self.native_type != other.native_type)
+            && (self.surface != other.surface
+                || matches!((self.native_type, other.native_type), (Some(a), Some(b)) if a != b))
     }
     pub fn has_default(&self) -> bool {
         self.native_default.is_some()
