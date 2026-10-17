@@ -76,7 +76,7 @@ pub fn app() -> Cli {
             .json_schema(json!({"type":"integer","minimum":1,"maximum":64}))
             .describe("Concurrent fingerprint workers"),
         ignore: flag::array("ignore", value::string().non_empty())
-            .separator(",")
+            .separator(',')
             .unique()
             .env("MANIFEST_IGNORE")
             .config("ignore")

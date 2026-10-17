@@ -21,7 +21,6 @@ use fujo::resolve::Stage;
 use fujo::resolve::was_explicit;
 use fujo::schema::DuplicatePolicy;
 use fujo::schema::PathChecks;
-use fujo::schema::PathType;
 use fujo::schema::Split;
 use fujo::schema::StdinBinding;
 use fujo::schema::StdinConsume;
@@ -596,11 +595,7 @@ fn builtin_names_can_be_released_explicitly() {
 fn path_checks_can_create_directories_and_preserve_missing_output_files() {
     let dir = tempfile::tempdir().unwrap();
     let nested = dir.path().join("a/b");
-    let path = flag::path("path").path_checks(PathChecks {
-        must_exist: true,
-        path_type: Some(PathType::Directory),
-        create: true,
-    });
+    let path = flag::path("path").path_checks(PathChecks::directory().create());
     let app = cli("app").default(command("app").flag(path).action(|_| Ok(())));
     let options = RunOptions {
         resolve: ResolveOptions {
@@ -616,11 +611,7 @@ fn path_checks_can_create_directories_and_preserve_missing_output_files() {
     assert!(nested.is_dir());
     let app = cli("app").default(
         command("app")
-            .flag(flag::path("output").path_checks(PathChecks {
-                must_exist: false,
-                path_type: Some(PathType::File),
-                create: false,
-            }))
+            .flag(flag::path("output").path_checks(PathChecks::file().allow_missing()))
             .action(|_| Ok(())),
     );
     assert!(

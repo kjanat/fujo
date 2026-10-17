@@ -48,7 +48,7 @@ pub fn app() -> Cli {
     let timeout = flag::duration("timeout").default(Duration::from_secs(30));
     let budget = flag::bytes("budget").default(64 * 1024 * 1024);
     let tags = flag::array("tag", value::string().non_empty())
-        .separator(",")
+        .separator(',')
         .unique()
         .env("BATCH_TAGS");
     let priorities = flag::key_value_of(

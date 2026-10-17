@@ -83,6 +83,24 @@ fn short_negated_flags_set_false() {
 }
 
 #[test]
+fn parsed_booleans_accept_their_negation() {
+    let cache = flag::parse::<bool>("cache").negatable();
+    for (argv, expected) in [("--no-cache", Some(false)), ("--cache=true", Some(true))] {
+        let result = run(
+            command("app").flag(cache.clone()),
+            &[argv],
+            RunOptions::default(),
+        );
+        assert!(result.success(), "{argv}: {:?}", result.error);
+        assert_eq!(
+            result.resolved.unwrap().get(&cache).unwrap(),
+            expected,
+            "{argv}"
+        );
+    }
+}
+
+#[test]
 fn collection_element_errors_name_the_collection_once() {
     let ports = flag::array("ports", value::number().min(1.0)).env("PORTS");
     let error = run(
@@ -460,14 +478,17 @@ fn byte_sizes_trim_whitespace_around_the_unit() {
 }
 
 #[test]
-fn empty_delimiters_are_rejected_once() {
-    let error = Split::Delimiter(String::new()).values("a").unwrap_err();
-    assert_eq!(error.code, "INVALID_SCHEMA");
-    assert_eq!(error.message, "Split delimiter cannot be empty");
-    let error = command("app")
-        .flag(flag::array("tags", value::string()).separator(""))
-        .validate()
-        .unwrap_err();
-    assert_eq!(error.code, "INVALID_SCHEMA");
-    assert_eq!(error.message, "Split delimiter cannot be empty");
+fn delimiters_split_on_one_character_and_drop_empty_parts() {
+    assert_eq!(
+        Split::Delimiter(';').values(";a;;b;").unwrap(),
+        [json!("a"), json!("b")]
+    );
+    let tags = flag::array("tags", value::string()).separator(';');
+    let result = run(
+        command("app").flag(tags.clone()),
+        &["--tags=x;y"],
+        RunOptions::default(),
+    );
+    assert!(result.success(), "{:?}", result.error);
+    assert_eq!(result.resolved.unwrap().get(&tags).unwrap(), ["x", "y"]);
 }

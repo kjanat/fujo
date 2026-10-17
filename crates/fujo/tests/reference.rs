@@ -36,7 +36,7 @@ fn schema(name: &str) -> fujo::Command {
             )
             .flag(
                 flag::array("tag", value::string())
-                    .separator(",")
+                    .separator(',')
                     .unique()
                     .env("TAGS"),
             )

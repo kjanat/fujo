@@ -78,6 +78,10 @@ pub struct Input<T, P = Optional, S = FlagMarker> {
     marker: PhantomData<InputType<T, P, S>>,
 }
 type InputType<T, P, S> = fn() -> (T, P, S);
+pub(super) fn choice_list<C: Into<String>, const N: usize>(choices: [C; N]) -> Vec<String> {
+    const { assert!(N > 0, "A choice list needs at least one choice") };
+    choices.into_iter().map(Into::into).collect()
+}
 impl<T, P, S> Clone for Input<T, P, S> {
     fn clone(&self) -> Self {
         Self {
@@ -179,11 +183,11 @@ impl<T, P, S> Input<T, P, S> {
     pub fn hide_default(self) -> Self {
         self.default_description(DefaultDescription::Hidden)
     }
-    pub fn choices(mut self, choices: impl IntoIterator<Item = impl Into<String>>) -> Self {
+    pub fn choices<C: Into<String>, const N: usize>(mut self, choices: [C; N]) -> Self {
         if self.schema.kind == Kind::String {
             self.schema.declaration.kind = Kind::Enum;
         }
-        self.schema.declaration.enum_values = choices.into_iter().map(Into::into).collect();
+        self.schema.declaration.enum_values = choice_list(choices);
         self
     }
 
@@ -258,8 +262,8 @@ mod sealed {
 pub trait Collection: sealed::Collection {}
 impl<T: sealed::Collection> Collection for T {}
 impl<T: Collection, P, S> Input<T, P, S> {
-    pub fn separator(mut self, separator: impl Into<String>) -> Self {
-        self.schema.declaration.cli_split = Split::Delimiter(separator.into());
+    pub fn separator(mut self, separator: char) -> Self {
+        self.schema.declaration.cli_split = Split::Delimiter(separator);
         self
     }
     pub fn split_cli(mut self, split: Split) -> Self {
@@ -358,8 +362,8 @@ impl<P, S> Input<String, P, S> {
     }
 }
 impl<P, S> Input<std::path::PathBuf, P, S> {
-    pub fn path_checks(mut self, checks: PathChecks) -> Self {
-        self.schema.declaration.path_checks = Some(checks);
+    pub fn path_checks(mut self, checks: impl Into<PathChecks>) -> Self {
+        self.schema.declaration.path_checks = Some(checks.into());
         self
     }
 }
@@ -428,12 +432,12 @@ pub mod flag {
         )))
         .default(0)
     }
-    pub fn enumeration(
+    pub fn enumeration<C: Into<String>, const N: usize>(
         name: &str,
-        choices: impl IntoIterator<Item = impl Into<String>>,
+        choices: [C; N],
     ) -> Input<String> {
         let mut schema = InputSchema::new(name, Kind::Enum, Surface::Flag);
-        schema.declaration.enum_values = choices.into_iter().map(Into::into).collect();
+        schema.declaration.enum_values = choice_list(choices);
         Input::from_schema(typed_schema::<String>(schema))
     }
     pub fn array<T: Clone + Send + Sync + 'static>(
@@ -580,9 +584,9 @@ pub mod arg {
     pub fn boolean(name: &str) -> Input<bool, Required, ArgMarker> {
         positional(flag::boolean(name))
     }
-    pub fn enumeration(
+    pub fn enumeration<C: Into<String>, const N: usize>(
         name: &str,
-        choices: impl IntoIterator<Item = impl Into<String>>,
+        choices: [C; N],
     ) -> Input<String, Required, ArgMarker> {
         positional(flag::enumeration(name, choices))
     }

@@ -38,7 +38,9 @@ fn property(input: &InputSchema) -> Value {
         Kind::KeyValue => {
             json!({"type":"object", "additionalProperties":input.element.as_deref().map(property).unwrap_or(json!({"type":"string"}))})
         }
+        #[cfg(feature = "url")]
         Kind::Url => json!({"type":"string", "format":"uri"}),
+        #[cfg(feature = "chrono")]
         Kind::Date => json!({"type":"string", "format":"date-time"}),
         Kind::Custom => json!({}),
     });

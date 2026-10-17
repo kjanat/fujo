@@ -40,7 +40,7 @@ pub fn app() -> Cli {
                 ..Default::default()
             });
         let features = flag::array("feature", value::enumeration(["cache", "metrics", "trace"]))
-            .separator(",")
+            .separator(',')
             .unique()
             .env("SETTINGS_FEATURES")
             .config("features");

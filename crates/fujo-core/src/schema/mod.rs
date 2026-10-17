@@ -21,8 +21,10 @@ pub enum Kind {
     Count,
     KeyValue,
     Custom,
+    #[cfg(feature = "url")]
     Url,
     Path,
+    #[cfg(feature = "chrono")]
     Date,
     Duration,
     Bytes,
@@ -76,27 +78,17 @@ impl StdinBinding {
 #[serde(tag = "format", content = "delimiter", rename_all = "lowercase")]
 pub enum Split {
     Whole,
-    Delimiter(String),
+    Delimiter(char),
     Lines,
     Whitespace,
     Json,
 }
 impl Split {
-    pub fn validate(&self) -> Result<()> {
-        if matches!(self, Self::Delimiter(separator) if separator.is_empty()) {
-            return Err(CliError::new(
-                "INVALID_SCHEMA",
-                "Split delimiter cannot be empty",
-            ));
-        }
-        Ok(())
-    }
     pub fn values(&self, text: &str) -> Result<Vec<Value>> {
-        self.validate()?;
         Ok(match self {
             Self::Whole => vec![json!(text)],
             Self::Delimiter(separator) => text
-                .split(separator)
+                .split(*separator)
                 .filter(|s| !s.is_empty())
                 .map(|s| json!(s))
                 .collect(),
@@ -137,9 +129,9 @@ pub enum PathType {
 #[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PathChecks {
-    pub must_exist: bool,
-    pub path_type: Option<PathType>,
-    pub create: bool,
+    pub(crate) must_exist: bool,
+    pub(crate) path_type: Option<PathType>,
+    pub(crate) create: bool,
 }
 impl PathChecks {
     pub fn file() -> Self {
@@ -149,20 +141,32 @@ impl PathChecks {
             create: false,
         }
     }
-    pub fn directory() -> Self {
-        Self {
+    pub fn directory() -> DirectoryChecks {
+        DirectoryChecks(Self {
             must_exist: true,
             path_type: Some(PathType::Directory),
             create: false,
-        }
+        })
     }
     pub fn allow_missing(mut self) -> Self {
         self.must_exist = false;
         self
     }
+}
+#[derive(Debug, Clone)]
+pub struct DirectoryChecks(PathChecks);
+impl DirectoryChecks {
+    pub fn allow_missing(self) -> Self {
+        Self(self.0.allow_missing())
+    }
     pub fn create(mut self) -> Self {
-        self.create = true;
+        self.0.create = true;
         self
+    }
+}
+impl From<DirectoryChecks> for PathChecks {
+    fn from(checks: DirectoryChecks) -> Self {
+        checks.0
     }
 }
 #[derive(Debug, Clone, Serialize)]
@@ -327,7 +331,7 @@ impl InputSchema {
                 prompt: None,
                 enum_values: vec![],
                 cli_split: Split::Whole,
-                env_split: Split::Delimiter(",".into()),
+                env_split: Split::Delimiter(','),
                 stdin_split: Split::Lines,
                 unique: false,
                 variadic: false,
@@ -479,10 +483,6 @@ impl InputSchema {
             Kind::Date => json!(parse_date(raw.as_str().ok_or_else(|| {
                 CliError::validation("TYPE_MISMATCH", "Expected an ISO date")
             })?)?),
-            #[cfg(not(feature = "url"))]
-            Kind::Url => return Err(disabled_feature("url")),
-            #[cfg(not(feature = "chrono"))]
-            Kind::Date => return Err(disabled_feature("chrono")),
             Kind::Duration => json!(parse_duration(&raw)?),
             Kind::Bytes => json!(parse_bytes(&raw)?),
             Kind::Custom => raw,
@@ -548,18 +548,6 @@ impl InputSchema {
         Ok(())
     }
     pub(crate) fn validate_definition(&self) -> Result<()> {
-        #[cfg(not(feature = "regex"))]
-        if self.pattern.is_some() {
-            return Err(disabled_feature("regex"));
-        }
-        #[cfg(not(feature = "url"))]
-        if self.kind == Kind::Url {
-            return Err(disabled_feature("url"));
-        }
-        #[cfg(not(feature = "chrono"))]
-        if self.kind == Kind::Date {
-            return Err(disabled_feature("chrono"));
-        }
         if let Some(prompt) = &self.prompt {
             prompt.validate_definition()?;
         }
@@ -594,18 +582,6 @@ impl InputSchema {
                 ));
             }
         }
-        if self.negated_name.is_some() && self.kind != Kind::Boolean {
-            return Err(CliError::new(
-                "INVALID_SCHEMA",
-                "Only boolean flags can be negated",
-            ));
-        }
-        if self.kind == Kind::Enum && self.enum_values.is_empty() {
-            return Err(CliError::new(
-                "INVALID_SCHEMA",
-                "An enum needs at least one choice",
-            ));
-        }
         if self.min.zip(self.max).is_some_and(|(min, max)| min > max)
             || self
                 .min_length
@@ -621,26 +597,7 @@ impl InputSchema {
                 "Invalid regular expression",
             ));
         }
-        if self
-            .path_checks
-            .as_ref()
-            .is_some_and(|p| p.create && p.path_type != Some(PathType::Directory))
-        {
-            return Err(CliError::new(
-                "INVALID_SCHEMA",
-                "Only directory paths can be created",
-            ));
-        }
-        for split in [&self.cli_split, &self.env_split, &self.stdin_split] {
-            split.validate()?;
-        }
         if let Some(element) = &self.element {
-            if element.collection() || matches!(element.kind, Kind::Count) {
-                return Err(CliError::new(
-                    "INVALID_SCHEMA",
-                    "Collections require a scalar element",
-                ));
-            }
             element.validate_definition()?;
         }
         if let Some(default) = &self.native_default {
@@ -685,11 +642,3 @@ use codecs::parse_bytes;
 use codecs::parse_date;
 use codecs::parse_duration;
 use codecs::parse_number;
-
-#[cfg(any(not(feature = "regex"), not(feature = "url"), not(feature = "chrono")))]
-fn disabled_feature(feature: &str) -> CliError {
-    CliError::new(
-        "FEATURE_DISABLED",
-        format!("Enable the '{feature}' Cargo feature for this input"),
-    )
-}

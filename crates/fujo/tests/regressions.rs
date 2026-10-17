@@ -280,8 +280,7 @@ fn native_primitives_export_values_defaults_and_bounded_json_schema() {
         schema["properties"]["flags"]["properties"]["times"]["maximum"],
         65535
     );
-    let values =
-        flag::array("values", value::parse::<u16>()).split_cli(Split::Delimiter(",".into()));
+    let values = flag::array("values", value::parse::<u16>()).split_cli(Split::Delimiter(','));
     let result = run(
         Command::new("app").flag(values),
         &["--values=001,2"],

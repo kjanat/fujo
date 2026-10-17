@@ -598,6 +598,8 @@ and `Resolved.skipped_checks`. Set `ResolveOptions.filesystem_policy` to
 runs injected checks and records skips. Native runs inject a filesystem.
 Use `PathChecks::file()` for existing input files and
 `PathChecks::file().allow_missing()` for output files that may be new.
+`PathChecks::directory().create()` creates a missing directory; `create` exists
+only on directory checks.
 
 ## Examples
 
