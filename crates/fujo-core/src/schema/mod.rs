@@ -259,6 +259,8 @@ pub(crate) type Validator = Arc<dyn Fn(&Value) -> Result<()> + Send + Sync>;
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InputSchema {
+    #[serde(skip)]
+    identity: Arc<()>,
     #[serde(flatten)]
     pub(crate) declaration: InputDeclaration,
     #[serde(skip)]
@@ -367,12 +369,16 @@ impl std::fmt::Debug for InputSchema {
 
 impl InputSchema {
     pub fn propagated(mut self) -> Self {
+        // Registration scope changes do not create a new input declaration.
         self.declaration.propagate = true;
         self
     }
+    /// Same-name declarations compose only when they are unchanged clones.
+    /// Native types alone cannot establish equivalence of validators or codecs.
     pub fn conflicts_with(&self, other: &InputSchema) -> bool {
         self.name == other.name
-            && (self.surface != other.surface
+            && (!Arc::ptr_eq(&self.identity, &other.identity)
+                || self.surface != other.surface
                 || matches!((self.native_type, other.native_type), (Some(a), Some(b)) if a != b))
     }
     pub fn has_default(&self) -> bool {
@@ -383,6 +389,7 @@ impl InputSchema {
     }
     fn new(name: &str, kind: Kind, surface: Surface) -> Self {
         Self {
+            identity: Arc::new(()),
             declaration: InputDeclaration {
                 name: name.into(),
                 surface,

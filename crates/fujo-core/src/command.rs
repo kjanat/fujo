@@ -143,8 +143,9 @@ impl CommandSchema {
             {
                 return Err(CliError::new(
                     "INVALID_SCHEMA",
-                    format!("Input '{}' is declared with conflicting types", input.name),
-                ));
+                    format!("Input '{}' has conflicting declarations", input.name),
+                )
+                .suggest("Reuse clones of the same input handle when composing declarations"));
             }
         }
         let mut names = HashSet::new();
@@ -222,16 +223,20 @@ impl CommandSchema {
     }
 }
 pub fn with_flags(mut schema: CommandSchema, inherited: &[InputSchema]) -> CommandSchema {
-    let mut flags: Vec<_> = inherited
-        .iter()
-        .filter(|f| {
-            schema
-                .flags
-                .iter()
-                .all(|local| local.name != f.name || local.conflicts_with(f))
-        })
-        .cloned()
-        .collect();
+    let mut flags: Vec<InputSchema> = vec![];
+    for input in inherited {
+        let existing = schema
+            .flags
+            .iter_mut()
+            .chain(flags.iter_mut())
+            .find(|existing| existing.name == input.name && !existing.conflicts_with(input));
+        if let Some(existing) = existing {
+            // Sharing a clone at a narrower scope must not stop propagation.
+            existing.declaration.propagate |= input.propagate;
+        } else {
+            flags.push(input.clone());
+        }
+    }
     flags.extend(schema.flags);
     schema.flags = flags;
     schema

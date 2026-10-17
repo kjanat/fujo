@@ -83,16 +83,14 @@ pub fn app() -> Cli {
             .default(vec![".git".into(), "target".into()])
             .describe("File or directory names to skip"),
     };
-    let root = || {
-        arg::path("root")
-            .path_checks(PathChecks::directory())
-            .describe("Directory to fingerprint")
-    };
+    let root = arg::path("root")
+        .path_checks(PathChecks::directory())
+        .describe("Directory to fingerprint");
     let workers = fujo::pipeline(globals.clone())
         .derive(|_, GlobalValues { jobs, .. }, ()| Ok(Arc::new(Semaphore::new(jobs.get()))));
     let scanner = fujo::pipeline(ScanInputs {
         globals: globals.clone(),
-        root: root(),
+        root: root.clone(),
     })
     .shared(&workers)
     .derive(|ctx, ScanValues { globals, root }, workers| {
@@ -104,7 +102,7 @@ pub fn app() -> Cli {
         .example("{bin} . --out manifest.json", "Write a manifest")
         .inputs(BuildInputs {
             globals: globals.clone(),
-            root: root(),
+            root: root.clone(),
             out: flag::path("out")
                 .alias("o")
                 .path_checks(PathChecks::file().allow_missing())
@@ -155,7 +153,7 @@ pub fn app() -> Cli {
         )
         .inputs(VerifyInputs {
             globals: globals.clone(),
-            root: root(),
+            root,
             manifest: flag::path("manifest")
                 .alias("m")
                 .path_checks(PathChecks::file())

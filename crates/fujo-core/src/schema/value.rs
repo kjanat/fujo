@@ -62,11 +62,13 @@ impl<T> ValueParser<T> {
     }
     pub fn flag(self, name: &str) -> Flag<T> {
         let mut schema = self.schema;
+        schema.identity = Arc::new(());
         schema.declaration.name = name.into();
         Input::from_schema(schema)
     }
     pub fn arg(self, name: &str) -> Arg<T> {
         let mut schema = self.schema;
+        schema.identity = Arc::new(());
         schema.declaration.name = name.into();
         schema.declaration.surface = Surface::Arg;
         schema.declaration.required = true;

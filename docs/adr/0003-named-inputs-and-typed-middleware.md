@@ -33,13 +33,15 @@ flowchart LR
 ## Decision
 
 `fujo::inputs!` declares a bundle struct and its values struct. Field types are
-input handles, tuples, or other bundles; the macro implements `InputSet` by
-visiting and reading each field, so a declared struct delivers values of its
-declared fields only. The seal is reachable through one hidden module used by
-the macro. Field types constrain the handles supplied at construction, so a
-handle of the wrong surface, value type, or presence fails where the struct is
-built. `fujo::flags!` adds `FlagSet` with a per-field bound, so a positional
-field is rejected at the declaration. Bundles are `Clone` and value structs are
+input handles, tuples, or other bundles; the macro implements `Bundle`, exposing
+references to its fields as a tuple and mapping that tuple's values into the
+values struct. A blanket `InputSet` implementation visits and reads those fields
+through the private sealed `Shape` trait. The reader seal stays private; the
+macro does not implement or expose it. Field types constrain the handles supplied
+at construction, so a handle of the wrong surface, value type, or presence fails where the struct is
+built. `fujo::flags!` checks that each field implements `FlagSet`; a blanket
+implementation makes bundles flag-only when their tuple shape is flag-only, so
+a positional field is rejected at the declaration. Bundles are `Clone` and value structs are
 `Copy`, so a global bundle registers once at the root and once in each leaf.
 
 The macro requires the handle type for each field, such as `Flag<u16, Required>`.
@@ -98,9 +100,14 @@ composes a pipeline's stages after the command's own stages declared so far,
 so a pipeline middleware wraps the command's later stages and action. It is
 available while the command's state is `()` and its tail is `AnyTail`; the
 pipeline's state and tail carry over, and the pipeline's inputs are registered
-on the command. A name the command already declares with the same type is
-registered once. A name declared with another type is the schema error
-`INVALID_SCHEMA`.
+on the command. Unchanged clones of one input handle carry the same declaration
+identity and register once. Independently constructed same-name inputs conflict,
+even if their native types and visible metadata match: validators and decoders
+can be closures whose equivalence cannot be established. Editing a cloned handle
+creates a distinct declaration. Such conflicts produce `INVALID_SCHEMA` before
+execution; reuse clones of the completed handle to share a declaration. These
+rules also apply to `share` and inherited flags. Internal propagation preserves
+identity and remains enabled when declarations from multiple scopes merge.
 
 `Cli::share` and `Command::share` run a pipeline once before dispatch as a
 dynamic step and keep its state in `Context` behind a private slot. A command

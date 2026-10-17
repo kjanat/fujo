@@ -227,6 +227,14 @@ impl Cli {
             examples: vec![],
         };
         check(&root, &reserved)?;
+        // CLI-wide flags are inherited at every depth, including during validation.
+        let globals: Vec<_> = self
+            .schema
+            .flags
+            .iter()
+            .cloned()
+            .map(InputSchema::propagated)
+            .collect();
         for command in &self.schema.commands {
             for name in std::iter::once(&command.name).chain(&command.aliases) {
                 if !names.insert(name) || (self.schema.completions && name == "completions") {
@@ -236,10 +244,10 @@ impl Cli {
                     ));
                 }
             }
-            check(&with_flags(command.clone(), &self.schema.flags), &reserved)?;
+            check(&with_flags(command.clone(), &globals), &reserved)?;
         }
         if let Some(default) = &self.schema.default {
-            check(&with_flags(default.clone(), &self.schema.flags), &reserved)?;
+            check(&with_flags(default.clone(), &globals), &reserved)?;
         }
         Ok(())
     }

@@ -1198,8 +1198,9 @@ fn named_relabels_the_last_stage() {
 
 #[test]
 fn inherited_and_shared_pipelines_register_their_inputs() {
-    let region = fujo::pipeline(flag::string("region").default("eu".into()))
-        .derive(|_, region, ()| Ok(region.to_uppercase()));
+    let region_input = flag::string("region").default("eu".into());
+    let region =
+        fujo::pipeline(region_input.clone()).derive(|_, region, ()| Ok(region.to_uppercase()));
     let zone = fujo::pipeline(flag::string("zone").default("a".into()))
         .derive(|_, zone, ()| Ok(zone.clone()));
     let show = Command::new("show")
@@ -1231,7 +1232,7 @@ fn inherited_and_shared_pipelines_register_their_inputs() {
         .inherit(&region)
         .map(|region| region.len());
     let count = Command::new("count")
-        .inputs(flag::string("region").default("eu".into()))
+        .inputs(region_input)
         .inherit(&nested)
         .action(|ctx, _, length| {
             ctx.out.log(length);
@@ -1320,13 +1321,11 @@ fn conflicting_declarations_of_one_name_are_schema_errors() {
         .error
         .unwrap();
     assert_eq!(error.code, "INVALID_SCHEMA");
-    assert_eq!(
-        error.message,
-        "Input 'port' is declared with conflicting types"
-    );
-    let number = fujo::pipeline(flag::parse::<u16>("port")).derive(|_, port, ()| Ok(port.copied()));
+    assert_eq!(error.message, "Input 'port' has conflicting declarations");
+    let port = flag::parse::<u16>("port");
+    let number = fujo::pipeline(port.clone()).derive(|_, port, ()| Ok(port.copied()));
     let command = Command::new("serve")
-        .inputs(flag::parse::<u16>("port"))
+        .inputs(port.clone())
         .inherit(&number)
         .action(|ctx, _, port| {
             ctx.out.log(format!("{port:?}"));
@@ -1360,30 +1359,20 @@ fn conflicting_declarations_of_one_name_are_schema_errors() {
         .execute(["serve", "--port=80"], RunOptions::default())
         .error
         .unwrap();
-    assert_eq!(
-        error.message,
-        "Input 'port' is declared with conflicting types"
-    );
+    assert_eq!(error.message, "Input 'port' has conflicting declarations");
     let error = Cli::new("demo")
         .command(Command::new("net").share(&text).command(child()))
         .execute(["net", "serve", "--port=80"], RunOptions::default())
         .error
         .unwrap();
-    assert_eq!(
-        error.message,
-        "Input 'port' is declared with conflicting types"
-    );
+    assert_eq!(error.message, "Input 'port' has conflicting declarations");
     let result = Cli::new("demo")
-        .command(
-            Command::new("net").share(&number).command(
-                Command::new("serve")
-                    .inputs(flag::parse::<u16>("port"))
-                    .action(|ctx, port, ()| {
-                        ctx.out.log(format!("{port:?}"));
-                        Ok(())
-                    }),
-            ),
-        )
+        .command(Command::new("net").share(&number).command(
+            Command::new("serve").inputs(port).action(|ctx, port, ()| {
+                ctx.out.log(format!("{port:?}"));
+                Ok(())
+            }),
+        ))
         .execute(["net", "serve", "--port=80"], RunOptions::default());
     assert!(result.success(), "{:?}", result.error);
     assert_eq!(result.stdout, "Some(80)\n");

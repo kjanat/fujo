@@ -376,16 +376,14 @@ fn strict_string_stays_out_of_definitions() {
 
 #[test]
 fn inherited_flags_precede_local_flags_without_shadowing() {
+    let verbose = flag::boolean("verbose");
     let schema = with_flags(
         command("child")
-            .flag(flag::boolean("verbose"))
+            .flag(verbose.clone())
             .flag(flag::string("name"))
             .schema()
             .clone(),
-        &[
-            flag::boolean("verbose").into_schema(),
-            flag::string("region").into_schema(),
-        ],
+        &[verbose.into_schema(), flag::string("region").into_schema()],
     );
     let names: Vec<_> = schema.flags.iter().map(|f| f.name.as_str()).collect();
     assert_eq!(names, ["region", "verbose", "name"]);
@@ -397,10 +395,11 @@ fn inherited_flags_precede_local_flags_without_shadowing() {
         .unwrap_err();
     assert_eq!(error.code, "INVALID_SCHEMA");
     assert_eq!(error.message, "Colliding flag spelling 'r'");
+    let region = flag::string("region").alias("r").propagate();
     assert!(
         command("root")
-            .flag(flag::string("region").alias("r").propagate())
-            .command(command("child").flag(flag::string("region").alias("r")))
+            .flag(region.clone())
+            .command(command("child").flag(region))
             .validate()
             .is_ok()
     );
