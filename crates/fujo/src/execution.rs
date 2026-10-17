@@ -1,4 +1,3 @@
-//! Executor-independent invocation of synchronous and asynchronous callbacks.
 use crate::CliError;
 use crate::Context;
 use crate::Result;
@@ -9,7 +8,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-/// A local future: an application chooses its executor and thread policy.
+/// A future the application's executor drives on the calling thread.
 pub type LocalFuture<'a, T> = Pin<Box<dyn Future<Output = T> + 'a>>;
 
 pub(crate) trait AsyncAction: Send + Sync {
@@ -23,11 +22,11 @@ where
         Box::pin(self(ctx))
     }
 }
-pub(crate) trait AsyncMiddleware: Send + Sync {
+pub(crate) trait AsyncStep: Send + Sync {
     fn call<'a>(&'a self, ctx: &'a mut Context, next: AsyncNext<'a>)
     -> LocalFuture<'a, Result<()>>;
 }
-impl<F> AsyncMiddleware for F
+impl<F> AsyncStep for F
 where
     F: for<'a> AsyncFn(&'a mut Context, AsyncNext<'a>) -> Result<()> + Send + Sync,
 {
@@ -48,7 +47,7 @@ pub(crate) enum Action {
 pub(crate) enum Step {
     Middleware(Middleware),
     Derive(SyncAction),
-    Async(Arc<dyn AsyncMiddleware>),
+    Async(Arc<dyn AsyncStep>),
 }
 pub(crate) fn async_required() -> CliError {
     CliError::new(
@@ -56,6 +55,13 @@ pub(crate) fn async_required() -> CliError {
         "This command requires asynchronous execution",
     )
     .suggest("Use execute_async, run_with_async, or run_async and await the result")
+}
+pub(crate) fn async_middleware_required() -> CliError {
+    CliError::new(
+        "ASYNC_MIDDLEWARE_REQUIRED",
+        "Synchronous middleware cannot wrap asynchronous work",
+    )
+    .suggest("Use middleware_async(async |ctx, next| { next.run(ctx).await })")
 }
 pub(crate) fn requires_async(steps: &[Step], action: Option<&Action>) -> bool {
     matches!(action, Some(Action::Async(_))) || steps.iter().any(|s| matches!(s, Step::Async(_)))
@@ -65,21 +71,14 @@ pub(crate) fn validate_async(steps: &[Step], action: Option<&Action>) -> Result<
     for step in steps.iter().rev() {
         match step {
             Step::Async(_) => asynchronous = true,
-            Step::Middleware(_) if asynchronous => {
-                return Err(CliError::new(
-                    "ASYNC_MIDDLEWARE_REQUIRED",
-                    "Synchronous middleware cannot wrap asynchronous work",
-                )
-                .suggest("Use middleware_async(async |ctx, next| { next.run(ctx).await })"));
-            }
+            Step::Middleware(_) if asynchronous => return Err(async_middleware_required()),
             _ => {}
         }
     }
     Ok(())
 }
 
-/// A consuming asynchronous continuation. Dropping it short-circuits the chain.
-/// Synchronous actions and derives also work under asynchronous middleware.
+/// The remaining steps and the action; dropping it skips them.
 ///
 /// ```compile_fail
 /// use fujo::Command;

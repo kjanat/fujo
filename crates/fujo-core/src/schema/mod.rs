@@ -21,8 +21,10 @@ pub enum Kind {
     Count,
     KeyValue,
     Custom,
+    #[cfg(feature = "url")]
     Url,
     Path,
+    #[cfg(feature = "chrono")]
     Date,
     Duration,
     Bytes,
@@ -76,7 +78,7 @@ impl StdinBinding {
 #[serde(tag = "format", content = "delimiter", rename_all = "lowercase")]
 pub enum Split {
     Whole,
-    Delimiter(String),
+    Delimiter(char),
     Lines,
     Whitespace,
     Json,
@@ -85,14 +87,8 @@ impl Split {
     pub fn values(&self, text: &str) -> Result<Vec<Value>> {
         Ok(match self {
             Self::Whole => vec![json!(text)],
-            Self::Delimiter(separator) if separator.is_empty() => {
-                return Err(CliError::new(
-                    "INVALID_SCHEMA",
-                    "Split delimiter cannot be empty",
-                ));
-            }
             Self::Delimiter(separator) => text
-                .split(separator)
+                .split(*separator)
                 .filter(|s| !s.is_empty())
                 .map(|s| json!(s))
                 .collect(),
@@ -133,9 +129,9 @@ pub enum PathType {
 #[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PathChecks {
-    pub must_exist: bool,
-    pub path_type: Option<PathType>,
-    pub create: bool,
+    pub(crate) must_exist: bool,
+    pub(crate) path_type: Option<PathType>,
+    pub(crate) create: bool,
 }
 impl PathChecks {
     pub fn file() -> Self {
@@ -145,20 +141,32 @@ impl PathChecks {
             create: false,
         }
     }
-    pub fn directory() -> Self {
-        Self {
+    pub fn directory() -> DirectoryChecks {
+        DirectoryChecks(Self {
             must_exist: true,
             path_type: Some(PathType::Directory),
             create: false,
-        }
+        })
     }
     pub fn allow_missing(mut self) -> Self {
         self.must_exist = false;
         self
     }
+}
+#[derive(Debug, Clone)]
+pub struct DirectoryChecks(PathChecks);
+impl DirectoryChecks {
+    pub fn allow_missing(self) -> Self {
+        Self(self.0.allow_missing())
+    }
     pub fn create(mut self) -> Self {
-        self.create = true;
+        self.0.create = true;
         self
+    }
+}
+impl From<DirectoryChecks> for PathChecks {
+    fn from(checks: DirectoryChecks) -> Self {
+        checks.0
     }
 }
 #[derive(Debug, Clone, Serialize)]
@@ -172,8 +180,6 @@ pub(crate) type NativeValidator = Arc<dyn Fn(&NativeValue) -> Result<()> + Send 
 pub(crate) type Encoder = Arc<dyn Fn(&NativeValue) -> Option<Value> + Send + Sync>;
 pub(crate) type Validator = Arc<dyn Fn(&Value) -> Result<()> + Send + Sync>;
 
-/// Serializable input declaration. Custom code is retained separately from metadata.
-///
 /// ```compile_fail
 /// use fujo_core::schema::{flag, Kind};
 /// let mut schema = flag::string("name").into_schema();
@@ -184,6 +190,8 @@ pub(crate) type Validator = Arc<dyn Fn(&Value) -> Result<()> + Send + Sync>;
 pub struct InputSchema {
     #[serde(flatten)]
     pub(crate) declaration: InputDeclaration,
+    #[serde(skip)]
+    pub(crate) native_type: Option<std::any::TypeId>,
     #[serde(skip)]
     pub(crate) native_decoder: Option<NativeDecoder>,
     #[serde(skip)]
@@ -196,9 +204,11 @@ pub struct InputSchema {
     pub(crate) validation_encoder: Option<Encoder>,
     #[serde(skip)]
     pub(crate) validators: Vec<Validator>,
+    #[cfg(feature = "regex")]
+    #[serde(skip)]
+    pub(crate) compiled_pattern: Option<Regex>,
 }
 
-/// Read-only metadata shared by parsers, completion generators, and renderers.
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InputDeclaration {
@@ -218,8 +228,6 @@ pub struct InputDeclaration {
     pub config_path: Option<String>,
     pub stdin: Option<StdinBinding>,
     pub prompt: Option<Prompt>,
-    #[serde(skip)]
-    pub default_value: Option<Value>,
     pub enum_values: Vec<String>,
     pub cli_split: Split,
     pub env_split: Split,
@@ -231,6 +239,7 @@ pub struct InputDeclaration {
     pub max: Option<f64>,
     pub integer: bool,
     pub non_empty: bool,
+    #[serde(skip)]
     pub(crate) strict_string: bool,
     pub min_length: Option<usize>,
     pub max_length: Option<usize>,
@@ -243,7 +252,6 @@ pub struct InputDeclaration {
     pub json_schema: Option<Value>,
 }
 
-/// A help annotation independent of the native default value.
 #[derive(Debug, Clone)]
 pub enum DefaultDescription {
     Text(String),
@@ -291,8 +299,16 @@ impl InputSchema {
         self.declaration.propagate = true;
         self
     }
+    pub fn conflicts_with(&self, other: &InputSchema) -> bool {
+        self.name == other.name
+            && (self.surface != other.surface
+                || matches!((self.native_type, other.native_type), (Some(a), Some(b)) if a != b))
+    }
     pub fn has_default(&self) -> bool {
         self.native_default.is_some()
+    }
+    pub fn default_json(&self) -> Option<&Value> {
+        self.native_default.as_ref().and_then(|d| d.json.as_ref())
     }
     fn new(name: &str, kind: Kind, surface: Surface) -> Self {
         Self {
@@ -313,10 +329,9 @@ impl InputSchema {
                 config_path: None,
                 stdin: None,
                 prompt: None,
-                default_value: None,
                 enum_values: vec![],
                 cli_split: Split::Whole,
-                env_split: Split::Delimiter(",".into()),
+                env_split: Split::Delimiter(','),
                 stdin_split: Split::Lines,
                 unique: false,
                 variadic: false,
@@ -336,12 +351,15 @@ impl InputSchema {
                 default_description: None,
                 json_schema: None,
             },
+            native_type: None,
             native_decoder: None,
             native_default: None,
             native_validators: vec![],
             encoder: None,
             validation_encoder: None,
             validators: vec![],
+            #[cfg(feature = "regex")]
+            compiled_pattern: None,
         }
     }
     pub fn expects_value(&self) -> bool {
@@ -373,145 +391,125 @@ impl InputSchema {
         error
     }
     pub(crate) fn decode_scalar(&self, raw: Value, source: Stage) -> Result<Value> {
+        self.decode_raw(raw, source)
+            .map_err(|e| self.failure(&e.code, &e.message, source == Stage::Cli))
+    }
+    pub(crate) fn decode_raw(&self, raw: Value, source: Stage) -> Result<Value> {
         let cli = source == Stage::Cli;
-        let result = (|| {
-            let value = match self.kind {
-                Kind::String | Kind::Path => {
-                    if let Some(text) = raw.as_str() {
-                        json!(text)
-                    } else if !self.strict_string
-                        && ((source == Stage::Config && (raw.is_number() || raw.is_boolean()))
-                            || source == Stage::Prompt)
-                    {
-                        json!(raw.to_string())
-                    } else {
-                        return Err(CliError::validation("TYPE_MISMATCH", "Expected a string"));
-                    }
+        let value = match self.kind {
+            Kind::String | Kind::Path => {
+                if let Some(text) = raw.as_str() {
+                    json!(text)
+                } else if !self.strict_string
+                    && ((source == Stage::Config && (raw.is_number() || raw.is_boolean()))
+                        || source == Stage::Prompt)
+                {
+                    json!(raw.to_string())
+                } else {
+                    return Err(CliError::validation("TYPE_MISMATCH", "Expected a string"));
                 }
-                Kind::Number | Kind::Count => {
-                    let n = if let Some(n) = raw.as_f64() {
-                        n
-                    } else if let Some(s) = raw.as_str() {
-                        if s.trim().is_empty() {
-                            return Err(CliError::validation("TYPE_MISMATCH", "Expected a number"));
-                        }
-                        parse_number(s.trim()).map_err(|_| {
-                            CliError::validation("TYPE_MISMATCH", "Expected a finite number")
-                        })?
-                    } else {
+            }
+            Kind::Number | Kind::Count => {
+                let n = if let Some(n) = raw.as_f64() {
+                    n
+                } else if let Some(s) = raw.as_str() {
+                    if s.trim().is_empty() {
                         return Err(CliError::validation("TYPE_MISMATCH", "Expected a number"));
-                    };
-                    if !n.is_finite() {
-                        return Err(CliError::validation(
-                            "TYPE_MISMATCH",
-                            "Expected a finite number",
-                        ));
                     }
-                    if self.kind == Kind::Count {
-                        if n < 0.0 || n.fract() != 0.0 || n >= u64::MAX as f64 {
-                            return Err(CliError::validation(
-                                "CONSTRAINT_VIOLATED",
-                                "Count must be a non-negative integer",
-                            ));
-                        }
-                        json!(n as u64)
-                    } else {
-                        json!(n)
-                    }
-                }
-                Kind::Boolean => {
-                    if let Some(b) = raw.as_bool() {
-                        json!(b)
-                    } else {
-                        let s = raw.as_str().map(str::to_lowercase).unwrap_or_default();
-                        match s.as_str() {
-                            "true" | "1" => json!(true),
-                            "false" | "0" => json!(false),
-                            "yes" | "y" if !cli => json!(true),
-                            "no" | "n" | "" if !cli && raw.is_string() => json!(false),
-                            _ => {
-                                return Err(CliError::validation(
-                                    "TYPE_MISMATCH",
-                                    "Expected a boolean",
-                                ));
-                            }
-                        }
-                    }
-                }
-                Kind::Enum => {
-                    let s = raw.as_str().ok_or_else(|| {
-                        CliError::validation("TYPE_MISMATCH", "Expected an enum string")
-                    })?;
-                    if !self.enum_values.iter().any(|v| v == s) {
-                        return Err(CliError::validation(
-                            "INVALID_ENUM",
-                            format!("Expected one of {}", self.enum_values.join(", ")),
-                        ));
-                    }
-                    json!(s)
-                }
-                #[cfg(feature = "url")]
-                Kind::Url => {
-                    let url = url::Url::parse(raw.as_str().ok_or_else(|| {
-                        CliError::validation("TYPE_MISMATCH", "Expected a URL string")
-                    })?)
-                    .map_err(|_| CliError::validation("CONSTRAINT_VIOLATED", "Invalid URL"))?;
-                    if !self.protocols.is_empty()
-                        && !self.protocols.iter().any(|p| p == url.scheme())
-                    {
-                        return Err(CliError::validation(
-                            "CONSTRAINT_VIOLATED",
-                            "URL protocol is not allowed",
-                        ));
-                    }
-                    json!(url.as_str())
-                }
-                #[cfg(feature = "chrono")]
-                Kind::Date => json!(parse_date(raw.as_str().ok_or_else(|| {
-                    CliError::validation("TYPE_MISMATCH", "Expected an ISO date")
-                })?)?),
-                #[cfg(not(feature = "url"))]
-                Kind::Url => return Err(disabled_feature("url")),
-                #[cfg(not(feature = "chrono"))]
-                Kind::Date => return Err(disabled_feature("chrono")),
-                Kind::Duration => json!(parse_duration(&raw)?),
-                Kind::Bytes => json!(parse_bytes(&raw)?),
-                Kind::Custom => {
-                    if !self.enum_values.is_empty()
-                        && !raw
-                            .as_str()
-                            .is_some_and(|s| self.enum_values.iter().any(|v| v == s))
-                    {
-                        return Err(CliError::validation(
-                            "INVALID_ENUM",
-                            "Value is not an available choice",
-                        ));
-                    }
-                    raw
-                }
-                Kind::Array | Kind::KeyValue => {
-                    return Err(CliError::new(
-                        "INVALID_SCHEMA",
-                        "Collection used as an element",
+                    parse_number(s.trim()).map_err(|_| {
+                        CliError::validation("TYPE_MISMATCH", "Expected a finite number")
+                    })?
+                } else {
+                    return Err(CliError::validation("TYPE_MISMATCH", "Expected a number"));
+                };
+                if !n.is_finite() {
+                    return Err(CliError::validation(
+                        "TYPE_MISMATCH",
+                        "Expected a finite number",
                     ));
                 }
-            };
-            self.validate_scalar(&value)?;
-            Ok(value)
-        })();
-        result.map_err(|e| self.failure(&e.code, &e.message, cli))
+                if self.kind == Kind::Count {
+                    if n < 0.0 || n.fract() != 0.0 || n >= u64::MAX as f64 {
+                        return Err(CliError::validation(
+                            "CONSTRAINT_VIOLATED",
+                            "Count must be a non-negative integer",
+                        ));
+                    }
+                    json!(n as u64)
+                } else {
+                    json!(n)
+                }
+            }
+            Kind::Boolean => {
+                if let Some(b) = raw.as_bool() {
+                    json!(b)
+                } else {
+                    let s = raw.as_str().map(str::to_lowercase).unwrap_or_default();
+                    match s.as_str() {
+                        "true" | "1" => json!(true),
+                        "false" | "0" => json!(false),
+                        "yes" | "y" if !cli => json!(true),
+                        "no" | "n" | "" if !cli && raw.is_string() => json!(false),
+                        _ => {
+                            return Err(CliError::validation(
+                                "TYPE_MISMATCH",
+                                "Expected a boolean",
+                            ));
+                        }
+                    }
+                }
+            }
+            Kind::Enum => {
+                let s = raw.as_str().ok_or_else(|| {
+                    CliError::validation("TYPE_MISMATCH", "Expected an enum string")
+                })?;
+                json!(s)
+            }
+            #[cfg(feature = "url")]
+            Kind::Url => {
+                let url = url::Url::parse(raw.as_str().ok_or_else(|| {
+                    CliError::validation("TYPE_MISMATCH", "Expected a URL string")
+                })?)
+                .map_err(|_| CliError::validation("CONSTRAINT_VIOLATED", "Invalid URL"))?;
+                if !self.protocols.is_empty() && !self.protocols.iter().any(|p| p == url.scheme()) {
+                    return Err(CliError::validation(
+                        "CONSTRAINT_VIOLATED",
+                        "URL protocol is not allowed",
+                    ));
+                }
+                json!(url.as_str())
+            }
+            #[cfg(feature = "chrono")]
+            Kind::Date => json!(parse_date(raw.as_str().ok_or_else(|| {
+                CliError::validation("TYPE_MISMATCH", "Expected an ISO date")
+            })?)?),
+            Kind::Duration => json!(parse_duration(&raw)?),
+            Kind::Bytes => json!(parse_bytes(&raw)?),
+            Kind::Custom => raw,
+            Kind::Array | Kind::KeyValue => {
+                return Err(CliError::new(
+                    "INVALID_SCHEMA",
+                    "Collection used as an element",
+                ));
+            }
+        };
+        self.validate_scalar(&value)?;
+        Ok(value)
     }
     pub(crate) fn validate_scalar(&self, value: &Value) -> Result<()> {
         let fail = |reason| CliError::validation("CONSTRAINT_VIOLATED", reason);
-        if !self.enum_values.is_empty()
-            && !value
-                .as_str()
-                .is_some_and(|s| self.enum_values.iter().any(|v| v == s))
-        {
-            return Err(CliError::validation(
-                "INVALID_ENUM",
-                "Value is not an available choice",
-            ));
+        if !self.enum_values.is_empty() {
+            let text = match value {
+                Value::String(s) => Some(s.clone()),
+                Value::Number(_) | Value::Bool(_) => Some(value.to_string()),
+                _ => None,
+            };
+            if !text.is_some_and(|s| self.enum_values.contains(&s)) {
+                return Err(CliError::validation(
+                    "INVALID_ENUM",
+                    format!("Expected one of {}", self.enum_values.join(", ")),
+                ));
+            }
         }
         if let Some(n) = value.as_f64() {
             if self.min.is_some_and(|min| n < min) {
@@ -536,12 +534,12 @@ impl InputSchema {
                 return Err(fail("Value is too long"));
             }
             #[cfg(feature = "regex")]
-            if let Some(pattern) = &self.pattern {
-                let regex = Regex::new(pattern)
-                    .map_err(|_| CliError::new("INVALID_SCHEMA", "Invalid regular expression"))?;
-                if !regex.is_match(s) {
-                    return Err(fail("Value does not match the pattern"));
-                }
+            if self
+                .compiled_pattern
+                .as_ref()
+                .is_some_and(|r| !r.is_match(s))
+            {
+                return Err(fail("Value does not match the pattern"));
             }
         }
         for validator in &self.validators {
@@ -550,18 +548,6 @@ impl InputSchema {
         Ok(())
     }
     pub(crate) fn validate_definition(&self) -> Result<()> {
-        #[cfg(not(feature = "regex"))]
-        if self.pattern.is_some() {
-            return Err(disabled_feature("regex"));
-        }
-        #[cfg(not(feature = "url"))]
-        if self.kind == Kind::Url {
-            return Err(disabled_feature("url"));
-        }
-        #[cfg(not(feature = "chrono"))]
-        if self.kind == Kind::Date {
-            return Err(disabled_feature("chrono"));
-        }
         if let Some(prompt) = &self.prompt {
             prompt.validate_definition()?;
         }
@@ -583,26 +569,18 @@ impl InputSchema {
                 "Text choices require a string, enum, or custom parser",
             ));
         }
-        if self.name.is_empty()
-            || self.name.starts_with('-')
-            || self.name.chars().any(|c| c.is_whitespace() || c == '=')
-        {
-            return Err(CliError::new(
-                "INVALID_SCHEMA",
-                "Input names must be non-empty names without whitespace, leading dashes, or '='",
-            ));
-        }
-        if self.negated_name.is_some() && self.kind != Kind::Boolean {
-            return Err(CliError::new(
-                "INVALID_SCHEMA",
-                "Only boolean flags can be negated",
-            ));
-        }
-        if self.kind == Kind::Enum && self.enum_values.is_empty() {
-            return Err(CliError::new(
-                "INVALID_SCHEMA",
-                "An enum needs at least one choice",
-            ));
+        for spelling in self.spellings() {
+            if spelling.is_empty()
+                || spelling.starts_with('-')
+                || spelling.chars().any(|c| c.is_whitespace() || c == '=')
+            {
+                return Err(CliError::new(
+                    "INVALID_SCHEMA",
+                    format!(
+                        "Input spelling '{spelling}' must be non-empty without whitespace, leading dashes, or '='"
+                    ),
+                ));
+            }
         }
         if self.min.zip(self.max).is_some_and(|(min, max)| min > max)
             || self
@@ -613,35 +591,13 @@ impl InputSchema {
             return Err(CliError::new("INVALID_SCHEMA", "Minimum exceeds maximum"));
         }
         #[cfg(feature = "regex")]
-        if let Some(pattern) = &self.pattern {
-            Regex::new(pattern)
-                .map_err(|_| CliError::new("INVALID_SCHEMA", "Invalid regular expression"))?;
-        }
-        if self
-            .path_checks
-            .as_ref()
-            .is_some_and(|p| p.create && p.path_type != Some(PathType::Directory))
-        {
+        if self.pattern.is_some() && self.compiled_pattern.is_none() {
             return Err(CliError::new(
                 "INVALID_SCHEMA",
-                "Only directory paths can be created",
+                "Invalid regular expression",
             ));
         }
-        for split in [&self.cli_split, &self.env_split, &self.stdin_split] {
-            if matches!(split, Split::Delimiter(s) if s.is_empty()) {
-                return Err(CliError::new(
-                    "INVALID_SCHEMA",
-                    "Split delimiter cannot be empty",
-                ));
-            }
-        }
         if let Some(element) = &self.element {
-            if element.collection() || matches!(element.kind, Kind::Count) {
-                return Err(CliError::new(
-                    "INVALID_SCHEMA",
-                    "Collections require a scalar element",
-                ));
-            }
             element.validate_definition()?;
         }
         if let Some(default) = &self.native_default {
@@ -654,6 +610,11 @@ impl InputSchema {
             }
         }
         Ok(())
+    }
+    pub(crate) fn spellings(&self) -> impl Iterator<Item = &str> {
+        std::iter::once(self.name.as_str())
+            .chain(self.aliases.iter().map(|a| a.name.as_str()))
+            .chain(self.negated_name.as_deref())
     }
     pub(crate) fn default_validation_json(&self, default: &NativeValue) -> Option<Value> {
         match &self.validation_encoder {
@@ -681,11 +642,3 @@ use codecs::parse_bytes;
 use codecs::parse_date;
 use codecs::parse_duration;
 use codecs::parse_number;
-
-#[cfg(any(not(feature = "regex"), not(feature = "url"), not(feature = "chrono")))]
-fn disabled_feature(feature: &str) -> CliError {
-    CliError::new(
-        "FEATURE_DISABLED",
-        format!("Enable the '{feature}' Cargo feature for this input"),
-    )
-}

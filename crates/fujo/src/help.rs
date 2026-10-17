@@ -2,8 +2,11 @@ use crate::command::CommandSchema;
 #[cfg(feature = "completion")]
 use crate::completion::Shell;
 use crate::schema::InputSchema;
+use crate::typed::ActionInfo;
+use crate::typed::StageInfo;
 use fujo_core::command::ProgramSchema;
 use fujo_output::visible_width;
+use std::fmt::Write;
 use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -66,12 +69,9 @@ pub fn root_help(program: &ProgramSchema, options: &HelpOptions) -> String {
             .unwrap_or_default()
     );
     if !program.description.is_empty() {
-        text.push_str(&format!(
-            "\n{}\n",
-            wrap(&program.description, options.width, 0)
-        ));
+        let _ = writeln!(text, "\n{}", wrap(&program.description, options.width, 0));
     }
-    text.push_str(&format!("\nUsage: {} <command> [options]\n", program.name));
+    let _ = writeln!(text, "\nUsage: {} <command> [options]", program.name);
     entries(
         &mut text,
         "Commands",
@@ -110,12 +110,15 @@ pub fn command_help(
             )
         });
     }
+    let lookup = crate::parse::flag_lookup(
+        &command.flags,
+        crate::parse::ParseOptions {
+            case_parity: options.case_parity,
+        },
+    );
     let mut text = format!("{bin}\n");
     if !command.description.is_empty() {
-        text.push_str(&format!(
-            "\n{}\n",
-            wrap(&command.description, options.width, 0)
-        ));
+        let _ = writeln!(text, "\n{}", wrap(&command.description, options.width, 0));
     }
     let args = command
         .args
@@ -129,8 +132,9 @@ pub fn command_help(
             )
         })
         .collect::<String>();
-    text.push_str(&format!(
-        "\nUsage: {bin}{args}{}{}\n",
+    let _ = writeln!(
+        text,
+        "\nUsage: {bin}{args}{}{}",
         if command.commands.is_empty() {
             ""
         } else {
@@ -141,7 +145,7 @@ pub fn command_help(
         } else {
             " [options]"
         }
-    ));
+    );
     entries(
         &mut text,
         "Arguments",
@@ -163,27 +167,12 @@ pub fn command_help(
                     .aliases
                     .iter()
                     .filter(|a| !a.hidden)
-                    .map(|a| {
-                        format!(
-                            "{}{}",
-                            if a.name.chars().count() == 1 {
-                                "-"
-                            } else {
-                                "--"
-                            },
-                            a.name
-                        )
-                    })
-                    .chain(std::iter::once(format!("--{}", {
-                        crate::parse::canonical_flag_name(
-                            flag,
-                            &command.flags,
-                            crate::parse::ParseOptions {
-                                case_parity: options.case_parity,
-                            },
-                        )
-                    })))
-                    .chain(flag.negated_name.as_ref().map(|n| format!("--{n}")))
+                    .map(|a| crate::parse::spelling(&a.name))
+                    .chain(std::iter::once(format!(
+                        "--{}",
+                        crate::parse::canonical_flag_name_with(&lookup, flag)
+                    )))
+                    .chain(flag.negated_name.as_deref().map(crate::parse::spelling))
                     .collect::<Vec<_>>()
                     .join(", ");
                 let hint = if flag.expects_value() {
@@ -225,29 +214,27 @@ pub fn command_help(
     text
 }
 fn globals(text: &mut String, program: &ProgramSchema, width: usize) {
-    let mut entries_ = vec![];
-    if program.builtins.help {
-        entries_.push(("-h, --help".into(), "Show help".into()));
-    }
-    if program.version.is_some() {
-        entries_.push(("-V, --version".into(), "Show version".into()));
-    }
-    if program.builtins.json {
-        entries_.push(("--json".into(), "Write structured JSON".into()));
-    }
-    if program.builtins.quiet {
-        entries_.push((
-            "-q, --quiet".into(),
-            "Suppress status and informational output".into(),
-        ));
-    }
-    if program.completions {
-        entries_.push((
-            "--completions <shell>".into(),
-            "Generate shell completions".into(),
-        ));
-    }
-    entries(text, "Global options", entries_, width);
+    let rows = program
+        .builtins
+        .global_flags(
+            program.version.is_some(),
+            program.completions,
+            program.config,
+        )
+        .into_iter()
+        .map(|flag| {
+            let mut label = String::new();
+            if let Some(short) = flag.short {
+                let _ = write!(label, "{short}, ");
+            }
+            label.push_str(flag.long);
+            if let Some(value) = flag.value {
+                let _ = write!(label, " <{value}>");
+            }
+            (label, flag.description.into())
+        })
+        .collect();
+    entries(text, "Global options", rows, width);
 }
 fn description(input: &InputSchema) -> String {
     let mut description = input.description.clone();
@@ -268,7 +255,7 @@ fn description(input: &InputSchema) -> String {
             }
             Some(crate::schema::DefaultDescription::Hidden) => {}
             None => {
-                if let Some(default) = &input.default_value
+                if let Some(default) = input.default_json()
                     && !input.sensitive
                 {
                     notes.push(format!("default: {default}"));
@@ -283,7 +270,7 @@ fn description(input: &InputSchema) -> String {
         if !description.is_empty() {
             description.push(' ');
         }
-        description.push_str(&format!("[{}]", notes.join("; ")));
+        let _ = write!(description, "[{}]", notes.join("; "));
     }
     description
 }
@@ -291,7 +278,7 @@ fn entries(text: &mut String, title: &str, rows: Vec<(String, String)>, width: u
     if rows.is_empty() {
         return;
     }
-    text.push_str(&format!("\n{title}:\n"));
+    let _ = writeln!(text, "\n{title}:");
     let column = rows
         .iter()
         .map(|(label, _)| visible_width(label))
@@ -300,7 +287,7 @@ fn entries(text: &mut String, title: &str, rows: Vec<(String, String)>, width: u
         .min(width / 2);
     for (label, description) in rows {
         if description.is_empty() {
-            text.push_str(&format!("  {label}\n"));
+            let _ = writeln!(text, "  {label}");
             continue;
         }
         let prefix = if visible_width(&label) > column {
@@ -340,9 +327,31 @@ fn wrap(text: &str, width: usize, indent: usize) -> String {
 }
 #[cfg(feature = "completion")]
 pub fn shell_from_path(path: &str) -> Option<Shell> {
-    std::path::Path::new(path)
-        .file_name()?
-        .to_str()?
-        .parse()
-        .ok()
+    Shell::from_path(path)
+}
+
+pub(crate) fn explain(path: &str, stages: &[StageInfo], action: Option<&ActionInfo>) -> String {
+    let mut text = format!("Stages of {path}:\n");
+    for stage in stages {
+        let _ = writeln!(
+            text,
+            "  {:<10} {:<5} {}",
+            format!("{:?}", stage.kind).to_lowercase(),
+            if stage.asynchronous { "async" } else { "sync" },
+            stage.handler
+        );
+    }
+    match action {
+        Some(action) => {
+            let _ = writeln!(
+                text,
+                "  {:<10} {:<5} {}",
+                "action",
+                if action.asynchronous { "async" } else { "sync" },
+                action.handler
+            );
+        }
+        None => text.push_str("  no action\n"),
+    }
+    text
 }

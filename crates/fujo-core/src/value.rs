@@ -44,7 +44,6 @@ pub(crate) fn primitive_schema<T: 'static>() -> Option<Value> {
     Some(serde_json::json!({"type": kind}))
 }
 
-/// Native Rust value; JSON is optional metadata, never the handler's storage model.
 #[derive(Clone)]
 pub struct NativeValue {
     pub(crate) inner: Arc<dyn Any + Send + Sync>,

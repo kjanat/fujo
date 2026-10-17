@@ -82,9 +82,29 @@ fn bash_script_parses_and_completes_flags_and_values() {
 fn bash_completion_understands_aliases_inline_values_and_flag_operands() {
     let script = generate(app().schema(), Shell::Bash);
     let probe = format!(
-        "{script}\nCOMP_WORDS=(demo db s --label seed --region=e); COMP_CWORD=5; _demo_complete; printf '%s\\n' \"${{COMPREPLY[@]}}\"\n"
+        "{script}\nCOMP_WORDBREAKS=' '; COMP_WORDS=(demo db s --label seed --region=e); COMP_CWORD=5; _demo_complete; printf '%s\\n' \"${{COMPREPLY[@]}}\"\n"
     );
     assert_eq!(run("bash", &[], &probe), "--region=eu\n");
+}
+#[test]
+#[cfg(feature = "shell-tests")]
+fn bash_completion_reassembles_words_readline_split_at_equals() {
+    let script = generate(app().schema(), Shell::Bash);
+    let words = "COMP_WORDS=(demo db s --label seed --region = e); COMP_CWORD=7; COMP_LINE='demo db s --label seed --region=e'; COMP_POINT=${#COMP_LINE}";
+    let probe =
+        format!("{script}\n{words}; _demo_complete; printf '%s\\n' \"${{COMPREPLY[@]}}\"\n");
+    assert_eq!(run("bash", &[], &probe), "eu\n");
+    let probe = format!(
+        "{script}\nCOMP_WORDS=(demo db s --label seed --region = ''); COMP_CWORD=7; _demo_complete; printf '%s\\n' \"${{COMPREPLY[@]}}\"\n"
+    );
+    assert_eq!(run("bash", &[], &probe), "us\neu\n");
+    let library = "/usr/share/bash-completion/bash_completion";
+    if std::path::Path::new(library).exists() {
+        let probe = format!(
+            "source {library}\n{script}\n{words}; _demo_complete; printf '%s\\n' \"${{COMPREPLY[@]}}\"\n"
+        );
+        assert_eq!(run("bash", &[], &probe), "eu\n");
+    }
 }
 #[test]
 #[cfg(feature = "shell-tests")]
@@ -128,6 +148,37 @@ fn powershell_script_parses_and_completes_nested_enum_values() {
         "{script}\n[System.Management.Automation.CommandCompletion]::CompleteInput('demo db seed --region e',23,$null).CompletionMatches | ForEach-Object {{ $_.CompletionText }}\n"
     );
     assert_eq!(run_powershell(&probe).trim(), "eu");
+}
+#[test]
+#[cfg(feature = "shell-tests")]
+fn fish_offers_enum_values_containing_spaces_as_single_candidates() {
+    let program =
+        cli("demo").command(command("send").flag(flag::enumeration("value", ["a b", "c'd", "e"])));
+    let script = generate(program.schema(), Shell::Fish);
+    let output = run(
+        "fish",
+        &[],
+        &format!("{script}\ncomplete -C 'demo send --value '\n"),
+    );
+    let lines: Vec<&str> = output.lines().collect();
+    assert_eq!(lines, ["a b", "c'd", "e"], "{output}");
+}
+#[test]
+#[cfg(feature = "shell-tests")]
+fn powershell_offers_nothing_after_a_free_text_flag() {
+    let script = generate(app().schema(), Shell::PowerShell);
+    let probe = format!(
+        "{script}\n$text='demo db seed --label '; [System.Management.Automation.CommandCompletion]::CompleteInput($text,$text.Length,$null).CompletionMatches | ForEach-Object {{ $_.CompletionText }}\n"
+    );
+    let output = run_powershell(&probe);
+    assert!(
+        !output.contains("--") && !output.contains("seed"),
+        "{output}"
+    );
+    let probe = format!(
+        "{script}\n$text='demo db seed --label x --'; [System.Management.Automation.CommandCompletion]::CompleteInput($text,$text.Length,$null).CompletionMatches | ForEach-Object {{ $_.CompletionText }}\n"
+    );
+    assert!(run_powershell(&probe).contains("--region"));
 }
 #[test]
 #[cfg(feature = "shell-tests")]

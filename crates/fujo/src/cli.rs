@@ -28,14 +28,17 @@ use crate::runtime::RunResult;
 use crate::runtime::Runtime;
 use crate::schema::Input;
 use crate::schema::InputSchema;
+use crate::typed::FlagSet;
+use crate::typed::Pipeline;
+use crate::typed::StageInfo;
 pub use fujo_core::command::Builtins;
 pub use fujo_core::command::ProgramSchema;
+use fujo_core::command::with_flags;
 use std::collections::BTreeSet;
 use std::path::Path;
 use std::process::ExitCode;
 use std::sync::Arc;
 
-/// Hooks are native trait methods; implementations may hold their own synchronized state.
 pub trait Plugin: Send + Sync {
     fn before_parse(&self, _argv: &mut Vec<String>) -> Result<()> {
         Ok(())
@@ -55,6 +58,8 @@ pub struct Cli {
     default: Option<Command>,
     plugins: Vec<Arc<dyn Plugin>>,
     config: Option<ConfigSettings>,
+    steps: Vec<Step>,
+    stages: Vec<StageInfo>,
 }
 impl std::fmt::Debug for Cli {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -73,12 +78,15 @@ pub fn cli(name: &str) -> Cli {
             default: None,
             builtins: Builtins::default(),
             completions: false,
+            config: false,
             flags: vec![],
         },
         commands: vec![],
         default: None,
         plugins: vec![],
         config: None,
+        steps: vec![],
+        stages: vec![],
     }
 }
 impl Cli {
@@ -124,8 +132,8 @@ impl Cli {
         self.default = Some(command);
         self
     }
-    pub fn flag<T, P>(mut self, flag: Input<T, P>) -> Self {
-        self.schema.flags.push(flag.into_schema());
+    pub fn flag<T: 'static, P: 'static>(mut self, flag: Input<T, P>) -> Self {
+        self.schema.flags.push(flag.typed_schema());
         self
     }
     /// Register reusable CLI-wide flags. Include the same bundle in a command's
@@ -133,6 +141,18 @@ impl Cli {
     pub fn inputs<I: crate::typed::FlagSet>(mut self, inputs: I) -> Self {
         inputs.visit(&mut |input| self.schema.flags.push(input));
         self
+    }
+    /// Run a pipeline once before any command and keep its state for stages that
+    /// call `shared`. The pipeline's flags are registered CLI-wide.
+    pub fn share<G: FlagSet, S: Send + 'static, M>(mut self, pipeline: &Pipeline<G, S, M>) -> Self {
+        crate::typed::declare(&mut self.schema.flags, pipeline.declared());
+        self.stages.extend(pipeline.stages());
+        self.steps.push(pipeline.step());
+        self
+    }
+    /// Stages shared through `share`, in execution order.
+    pub fn stages(&self) -> &[StageInfo] {
+        &self.stages
     }
     pub fn builtins(mut self, builtins: Builtins) -> Self {
         self.schema.builtins = builtins;
@@ -144,6 +164,7 @@ impl Cli {
         self
     }
     pub fn config(mut self, settings: ConfigSettings) -> Self {
+        self.schema.config = true;
         self.config = Some(settings);
         self
     }
@@ -162,6 +183,9 @@ impl Cli {
         }
         if self.schema.builtins.quiet {
             reserved.extend(["quiet", "q"]);
+        }
+        if self.schema.builtins.explain {
+            reserved.push("explain");
         }
         if self.schema.version.is_some() {
             reserved.extend(["version", "V"]);
@@ -219,7 +243,7 @@ impl Cli {
         }
         Ok(())
     }
-    /// Process-free execution: all environment, stdin, prompts, and filesystem data are injected.
+    /// Execute with injected environment, stdin, prompts, and filesystem data.
     pub fn execute(
         &self,
         argv: impl IntoIterator<Item = impl Into<String>>,
@@ -232,8 +256,7 @@ impl Cli {
             None,
         )
     }
-    /// Execute async actions and middleware with injected capabilities.
-    /// The caller chooses an executor; futures may hold local, non-Send values.
+    /// Execute asynchronous commands with injected capabilities on the caller's executor.
     pub async fn execute_async(
         &self,
         argv: impl IntoIterator<Item = impl Into<String>>,
@@ -247,7 +270,6 @@ impl Cli {
         )
         .await
     }
-    /// Await native execution. Stdio, prompts, and filesystem preparation remain synchronous.
     pub async fn run_async(&self) -> ExitCode {
         self.run_os_with_async(
             std::env::args_os().skip(1),
@@ -281,8 +303,7 @@ impl Cli {
         self.execute_inner_async(argv, options, Some(runtime), error)
             .await
     }
-    /// Run with native stdio, named environment reads, and filesystem capabilities.
-    /// Returning `ExitCode` lets an application's `main` perform normal Rust cleanup.
+    /// Run with native stdio, environment, and filesystem.
     pub fn run(&self) -> ExitCode {
         self.run_os_with(
             std::env::args_os().skip(1),
@@ -304,7 +325,6 @@ impl Cli {
             None,
         )
     }
-    /// OS arguments are decoded explicitly; invalid Unicode becomes a parse error.
     pub fn run_os_with(
         &self,
         argv: impl IntoIterator<Item = impl Into<std::ffi::OsString>>,
@@ -400,8 +420,8 @@ impl Cli {
         }
         let mode_error = strip_modes(&mut argv, &self.schema.builtins, &mut options);
         if let Some(runtime) = runtime {
-            options.output.tty = runtime.stdout_is_tty();
-            options.output.color = options.output.tty && runtime.env("NO_COLOR").is_none();
+            options.output.tty = runtime.stderr_is_tty();
+            options.output.color = runtime.stdout_is_tty() && runtime.env("NO_COLOR").is_none();
         }
         let output = options
             .channel
@@ -418,14 +438,11 @@ impl Cli {
                 return Err(error);
             }
             self.validate()?;
-            if self.schema.version.is_some()
+            if let Some(version) = &self.schema.version
                 && (parse::includes_before_separator(&argv, "--version")
                     || parse::includes_before_separator(&argv, "-V"))
             {
-                output.raw_stdout(&format!(
-                    "{}\n",
-                    self.schema.version.as_deref().expect("version")
-                ));
+                output.raw_stdout(&format!("{version}\n"));
                 return Ok(None);
             }
             if self.schema.builtins.help && argv.first().is_some_and(|s| s == "help") {
@@ -491,6 +508,11 @@ impl Cli {
                     "-h",
                 );
             }
+            let explain = self.schema.builtins.explain
+                && parse::includes_before_separator(&argv, "--explain");
+            if explain {
+                argv = parse::strip_before_separator(&argv, "--explain");
+            }
             let explicit_config = if self.config.is_some() {
                 match extract_config(&mut argv) {
                     Ok(path) => path,
@@ -516,7 +538,8 @@ impl Cli {
                 return Ok(None);
             };
             if help
-                || (invocation.command.action.is_none()
+                || (!explain
+                    && invocation.command.action.is_none()
                     && !invocation.command.children.is_empty()
                     && invocation.argv.is_empty())
             {
@@ -544,6 +567,24 @@ impl Cli {
                 ));
                 return Ok(None);
             }
+            if explain {
+                let path = if invocation.path.is_empty() {
+                    invocation.command.schema.name.clone()
+                } else {
+                    invocation.path
+                };
+                let action = invocation.command.action_info;
+                if options.output.json {
+                    output.json(&serde_json::json!({
+                        "command": path,
+                        "stages": invocation.stages,
+                        "action": action,
+                    }))?;
+                } else {
+                    output.raw_stdout(&help::explain(&path, &invocation.stages, action.as_ref()));
+                }
+                return Ok(None);
+            }
             let parsed = parse::parse(&invocation.schema, &invocation.argv, options.parse)?;
             if let Some(runtime) = runtime {
                 for input in invocation
@@ -565,7 +606,9 @@ impl Cli {
                 }
                 #[cfg(feature = "terminal-prompts")]
                 if options.resolve.prompter.is_none() && runtime.stdin_is_tty() {
-                    options.resolve.prompter = Some(Arc::new(crate::prompt::TerminalPrompter));
+                    options.resolve.prompter = Some(Arc::new(
+                        crate::prompt::TerminalPrompter::new(output.clone()),
+                    ));
                 }
                 if options.resolve.stdin.is_none()
                     && !runtime.stdin_is_tty()
@@ -639,13 +682,13 @@ impl Cli {
             }
             output.render_error(error);
         }
-        let capture = output.captured();
+        let (capture, activities) = output.report();
         RunResult {
             exit_code: error.as_ref().map_or(output.exit_code(), |e| e.exit_code),
             stdout: capture.stdout,
             stderr: capture.stderr,
             error,
-            activities: output.events(),
+            activities,
             skipped_checks: resolved
                 .as_ref()
                 .map(|r| r.skipped_checks.clone())
@@ -662,7 +705,8 @@ impl Cli {
         let mut children = self.commands.as_slice();
         let mut selected = self.default.as_ref();
         let mut inherited = self.schema.flags.clone();
-        let mut steps = vec![];
+        let mut steps = self.steps.clone();
+        let mut stages = self.stages.clone();
         let mut path = String::new();
         let mut matched = false;
         loop {
@@ -670,7 +714,6 @@ impl Cli {
             if let Some(command) = selected {
                 flags.extend(command.schema.flags.clone());
             }
-            // Arity-aware scanning prevents a flag operand from being mistaken for a command.
             for child in children {
                 flags.extend(child.schema.flags.clone());
             }
@@ -683,15 +726,17 @@ impl Cli {
                 .iter()
                 .find(|c| c.schema.name == *name || c.schema.aliases.contains(name))
             {
+                let parent = selected.filter(|_| matched);
                 rest.remove(index);
                 matched = true;
                 if !path.is_empty() {
                     path.push(' ');
                 }
                 path.push_str(&command.schema.name);
-                if let Some(parent) = selected.filter(|_| !path.eq(&command.schema.name)) {
+                if let Some(parent) = parent {
                     inherited.extend(parent.schema.flags.iter().filter(|f| f.propagate).cloned());
                     steps.extend(parent.steps.clone());
+                    stages.extend(parent.stages.clone());
                 }
                 selected = Some(command);
                 children = &command.children;
@@ -725,12 +770,14 @@ impl Cli {
             return Ok(None);
         };
         steps.extend(command.steps.clone());
+        stages.extend(command.stages());
         Ok(Some(Invocation {
             command,
             schema: with_flags(command.schema.clone(), &inherited),
             argv: rest,
             path,
             steps,
+            stages,
         }))
     }
 }
@@ -740,16 +787,7 @@ struct Invocation<'a> {
     argv: Vec<String>,
     path: String,
     steps: Vec<Step>,
-}
-fn with_flags(mut schema: CommandSchema, inherited: &[InputSchema]) -> CommandSchema {
-    let mut flags: Vec<_> = inherited
-        .iter()
-        .filter(|f| !schema.flags.iter().any(|local| local.name == f.name))
-        .cloned()
-        .collect();
-    flags.extend(schema.flags);
-    schema.flags = flags;
-    schema
+    stages: Vec<StageInfo>,
 }
 fn command_index(argv: &[String], flags: &[InputSchema], options: ParseOptions) -> Option<usize> {
     let lookup = parse::flag_lookup(flags, options);

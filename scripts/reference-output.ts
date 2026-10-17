@@ -1,7 +1,6 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { isDeepStrictEqual } from 'node:util';
 
-/** Check semantic JSON equality without rewriting fixtures during validation. */
 export function writeReference<T extends { fixtures: readonly unknown[] }>(path: string, value: T): void {
 	const serialized = JSON.stringify(value, null, '\t') + '\n';
 	if (process.argv.includes('--check')) {

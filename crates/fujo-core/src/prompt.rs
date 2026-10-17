@@ -110,7 +110,6 @@ impl Prompt {
         }
         Ok(())
     }
-    /// Apply blank-answer defaults and validation consistently for every host.
     pub fn normalize_answer(&self, answer: Option<Value>) -> Result<Option<Value>> {
         self.validate_definition()?;
         let Some(answer) = answer else {
@@ -152,10 +151,8 @@ impl Prompt {
         Ok(Some(answer))
     }
 }
-/// Hosts decide how to render and collect an answer. `None` skips this source.
 pub trait PromptEngine: Send + Sync {
     fn prompt(&self, prompt: &Prompt) -> Result<Option<Value>>;
-    /// Return true when the engine can collect another answer after rejection.
     fn retry(&self, _error: &CliError) -> bool {
         false
     }

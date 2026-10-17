@@ -8,7 +8,6 @@ use chrono::Utc;
 use std::collections::BTreeMap;
 use std::marker::PhantomData;
 
-/// Input surfaces are distinct types; a positional cannot be registered as a flag.
 #[derive(Debug, Clone, Copy)]
 pub struct FlagMarker;
 #[derive(Debug, Clone, Copy)]
@@ -16,7 +15,6 @@ pub struct ArgMarker;
 pub type Flag<T, P = Optional> = Input<T, P, FlagMarker>;
 pub type Arg<T, P = Required> = Input<T, P, ArgMarker>;
 
-/// Optional/required presence is part of the Rust type, including defaults.
 #[derive(Debug, Clone, Copy)]
 pub struct Optional;
 #[derive(Debug, Clone, Copy)]
@@ -80,12 +78,23 @@ pub struct Input<T, P = Optional, S = FlagMarker> {
     marker: PhantomData<InputType<T, P, S>>,
 }
 type InputType<T, P, S> = fn() -> (T, P, S);
+pub(super) fn choice_list<C: Into<String>, const N: usize>(choices: [C; N]) -> Vec<String> {
+    const { assert!(N > 0, "A choice list needs at least one choice") };
+    choices.into_iter().map(Into::into).collect()
+}
 impl<T, P, S> Clone for Input<T, P, S> {
     fn clone(&self) -> Self {
         Self {
             schema: self.schema.clone(),
             marker: PhantomData,
         }
+    }
+}
+impl<T: 'static, P: 'static, S: 'static> Input<T, P, S> {
+    pub fn typed_schema(&self) -> InputSchema {
+        let mut schema = self.schema.clone();
+        schema.native_type = Some(std::any::TypeId::of::<InputType<T, P, S>>());
+        schema
     }
 }
 impl<T, P, S> Input<T, P, S> {
@@ -144,7 +153,6 @@ impl<T, P, S> Input<T, P, S> {
         self.schema.declaration.value_hint = Some(hint.into());
         self
     }
-    /// Supply the JSON representation without requiring Serde on the native type.
     pub fn encode_json(mut self, encode: impl Fn(&T) -> Value + Send + Sync + 'static) -> Self
     where
         T: Send + Sync + 'static,
@@ -161,7 +169,6 @@ impl<T, P, S> Input<T, P, S> {
                 .encoder
                 .as_ref()
                 .and_then(|encode| encode(default));
-            self.schema.declaration.default_value = default.json.clone();
         }
         self
     }
@@ -176,11 +183,11 @@ impl<T, P, S> Input<T, P, S> {
     pub fn hide_default(self) -> Self {
         self.default_description(DefaultDescription::Hidden)
     }
-    pub fn choices(mut self, choices: impl IntoIterator<Item = impl Into<String>>) -> Self {
+    pub fn choices<C: Into<String>, const N: usize>(mut self, choices: [C; N]) -> Self {
         if self.schema.kind == Kind::String {
             self.schema.declaration.kind = Kind::Enum;
         }
-        self.schema.declaration.enum_values = choices.into_iter().map(Into::into).collect();
+        self.schema.declaration.enum_values = choice_list(choices);
         self
     }
 
@@ -188,13 +195,11 @@ impl<T, P, S> Input<T, P, S> {
         self.schema.declaration.default_description = None;
         self.schema.declaration.required = true;
         self.schema.native_default = None;
-        self.schema.declaration.default_value = None;
         Input::from_schema(self.schema)
     }
     pub fn optional(mut self) -> Input<T, Optional, S> {
         self.schema.declaration.default_description = None;
         self.schema.declaration.required = false;
-        self.schema.declaration.default_value = None;
         self.schema.native_default = None;
         Input::from_schema(self.schema)
     }
@@ -210,7 +215,6 @@ impl<T, P, S> Input<T, P, S> {
             .encoder
             .as_ref()
             .and_then(|encode| encode(&native));
-        self.schema.declaration.default_value = native.json.clone();
         self.schema.native_default = Some(native);
         Input::from_schema(self.schema)
     }
@@ -255,13 +259,11 @@ mod sealed {
     impl<T> Collection for Vec<T> {}
     impl<T> Collection for std::collections::BTreeMap<String, T> {}
 }
-/// Collection values support delimiter and source-specific splitting.
 pub trait Collection: sealed::Collection {}
-impl<T> Collection for Vec<T> {}
-impl<T> Collection for BTreeMap<String, T> {}
+impl<T: sealed::Collection> Collection for T {}
 impl<T: Collection, P, S> Input<T, P, S> {
-    pub fn separator(mut self, separator: impl Into<String>) -> Self {
-        self.schema.declaration.cli_split = Split::Delimiter(separator.into());
+    pub fn separator(mut self, separator: char) -> Self {
+        self.schema.declaration.cli_split = Split::Delimiter(separator);
         self
     }
     pub fn split_cli(mut self, split: Split) -> Self {
@@ -305,7 +307,6 @@ impl<T, P> Input<T, P, ArgMarker> {
         });
         let mut element = original.clone();
         element.native_default = None;
-        element.declaration.default_value = None;
         element.declaration.default_description = None;
         element.declaration.required = false;
         element.declaration.env_vars.clear();
@@ -316,7 +317,6 @@ impl<T, P> Input<T, P, ArgMarker> {
         if let Some(default) = default {
             let mut native = NativeValue::new(default);
             native.json = schema.encoder.as_ref().and_then(|encode| encode(&native));
-            schema.declaration.default_value = native.json.clone();
             schema.native_default = Some(native);
         }
         schema.declaration.surface = Surface::Arg;
@@ -355,13 +355,15 @@ impl<P, S> Input<String, P, S> {
     }
     #[cfg(feature = "regex")]
     pub fn pattern(mut self, pattern: impl Into<String>) -> Self {
-        self.schema.declaration.pattern = Some(pattern.into());
+        let pattern = pattern.into();
+        self.schema.compiled_pattern = Regex::new(&pattern).ok();
+        self.schema.declaration.pattern = Some(pattern);
         self
     }
 }
 impl<P, S> Input<std::path::PathBuf, P, S> {
-    pub fn path_checks(mut self, checks: PathChecks) -> Self {
-        self.schema.declaration.path_checks = Some(checks);
+    pub fn path_checks(mut self, checks: impl Into<PathChecks>) -> Self {
+        self.schema.declaration.path_checks = Some(checks.into());
         self
     }
 }
@@ -381,7 +383,8 @@ impl<P, S> Input<f64, P, S> {
 }
 impl<P> Input<bool, P, FlagMarker> {
     pub fn negatable(mut self) -> Self {
-        self.schema.declaration.negated_name = Some(format!("no-{}", self.schema.name));
+        self.schema.declaration.negated_name =
+            Some(format!("no-{}", crate::parse::kebab(&self.schema.name)));
         self
     }
     pub fn negated_name(mut self, name: impl Into<String>) -> Self {
@@ -429,12 +432,12 @@ pub mod flag {
         )))
         .default(0)
     }
-    pub fn enumeration(
+    pub fn enumeration<C: Into<String>, const N: usize>(
         name: &str,
-        choices: impl IntoIterator<Item = impl Into<String>>,
+        choices: [C; N],
     ) -> Input<String> {
         let mut schema = InputSchema::new(name, Kind::Enum, Surface::Flag);
-        schema.declaration.enum_values = choices.into_iter().map(Into::into).collect();
+        schema.declaration.enum_values = choice_list(choices);
         Input::from_schema(typed_schema::<String>(schema))
     }
     pub fn array<T: Clone + Send + Sync + 'static>(
@@ -465,7 +468,6 @@ pub mod flag {
         }));
         Input::from_schema(schema)
     }
-    /// Parse any native `FromStr` type, including application enums and identifiers.
     pub fn parse<T>(name: &str) -> Input<T>
     where
         T: std::str::FromStr + Send + Sync + 'static,
@@ -571,7 +573,6 @@ pub mod arg {
         flag.schema.declaration.surface = Surface::Arg;
         flag.schema.declaration.required = true;
         flag.schema.native_default = None;
-        flag.schema.declaration.default_value = None;
         Input::from_schema(flag.schema)
     }
     pub fn string(name: &str) -> Input<String, Required, ArgMarker> {
@@ -581,13 +582,11 @@ pub mod arg {
         positional(flag::number(name))
     }
     pub fn boolean(name: &str) -> Input<bool, Required, ArgMarker> {
-        let mut schema = InputSchema::new(name, Kind::Boolean, Surface::Arg);
-        schema.declaration.required = true;
-        Input::from_schema(typed_schema::<bool>(schema))
+        positional(flag::boolean(name))
     }
-    pub fn enumeration(
+    pub fn enumeration<C: Into<String>, const N: usize>(
         name: &str,
-        choices: impl IntoIterator<Item = impl Into<String>>,
+        choices: [C; N],
     ) -> Input<String, Required, ArgMarker> {
         positional(flag::enumeration(name, choices))
     }
@@ -627,7 +626,6 @@ pub mod arg {
 }
 
 impl<T, P> Input<BTreeMap<String, T>, P, ArgMarker> {
-    /// Consume the positional tail as entries, folding it into one native map.
     pub fn variadic_entries(mut self) -> Self {
         self.schema.declaration.variadic = true;
         self

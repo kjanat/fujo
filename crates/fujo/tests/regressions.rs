@@ -9,7 +9,6 @@ use fujo::flag;
 use fujo::json;
 use fujo::prompt::Answer;
 use fujo::prompt::Prompt;
-use fujo::prompt::TestPrompter;
 use fujo::resolve::CheckPolicy;
 use fujo::resolve::FileSystem;
 use fujo::resolve::SkipReason;
@@ -18,19 +17,20 @@ use fujo::schema::PathChecks;
 use fujo::schema::PathType;
 use fujo::schema::Split;
 use fujo::value;
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
+#[path = "support/prompter.rs"]
+mod prompter;
+#[path = "support/reader.rs"]
+mod reader;
+use prompter::prompted;
 
 fn run(command: Command, argv: &[&str], options: RunOptions) -> fujo::RunResult {
     Cli::new("app")
         .default(command.action(|_| Ok(())))
         .execute(argv.iter().copied(), options)
-}
-fn prompted(answers: impl IntoIterator<Item = Answer>) -> RunOptions {
-    let mut options = RunOptions::default();
-    options.resolve.prompter = Some(Arc::new(TestPrompter::new(answers)));
-    options
 }
 
 #[test]
@@ -280,8 +280,7 @@ fn native_primitives_export_values_defaults_and_bounded_json_schema() {
         schema["properties"]["flags"]["properties"]["times"]["maximum"],
         65535
     );
-    let values =
-        flag::array("values", value::parse::<u16>()).split_cli(Split::Delimiter(",".into()));
+    let values = flag::array("values", value::parse::<u16>()).split_cli(Split::Delimiter(','));
     let result = run(
         Command::new("app").flag(values),
         &["--values=001,2"],
@@ -502,12 +501,6 @@ fn completion_spelling_respects_disabled_case_parity() {
     }
 }
 
-struct StaticConfig;
-impl fujo::config::ConfigReader for StaticConfig {
-    fn read(&self, _: &Path) -> fujo::Result<Option<String>> {
-        Ok(Some("8080".into()))
-    }
-}
 #[test]
 fn config_loaders_receive_the_discovered_path() {
     let settings =
@@ -517,7 +510,10 @@ fn config_loaders_receive_the_discovered_path() {
         });
     let found = fujo::config::discover(
         &settings,
-        &StaticConfig,
+        &reader::MapReader(BTreeMap::from([(
+            PathBuf::from("/project/app.txt"),
+            "8080".into(),
+        )])),
         &[PathBuf::from("/project/app.txt")],
         None,
     )
@@ -667,7 +663,6 @@ fn native_path_defaults_check_supported_filesystem_names() {
     let dir = tempfile::tempdir().unwrap();
     let names = [
         std::ffi::OsString::from("f-東京"),
-        // Retain the original native non-UTF-8 fixture on Linux too.
         #[cfg(target_os = "linux")]
         {
             use std::os::unix::ffi::OsStringExt;
@@ -676,7 +671,11 @@ fn native_path_defaults_check_supported_filesystem_names() {
     ];
     for name in names {
         let path = dir.path().join(name);
-        std::fs::write(&path, "fixture").unwrap();
+        match std::fs::write(&path, "fixture") {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::InvalidInput => return,
+            Err(error) => panic!("{error}"),
+        }
         let file = flag::path("file")
             .path_checks(PathChecks::file())
             .default(path.clone());

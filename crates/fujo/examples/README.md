@@ -6,20 +6,56 @@ in the same file. `main()` calls `app().run()` or awaits `app().run_async()` usi
 the application's executor. The integration tests import
 these exact definitions and execute them with injected inputs.
 
-| Example                          | CLI logic                                 | What it demonstrates                                                                                                                                                                        |
-| -------------------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [release.rs](release.rs)         | `app()` near the top; version types below | Native `Version` and `Bump`, checked version arithmetic, config/env/CLI precedence, conditional secret prompts, typed derived plans, middleware, JSON encoding without Serde on input types |
-| [batch.rs](batch.rs)             | `app()`; job/result types below           | Variadic checked paths, nonzero worker counts, typed priority maps, validated/deduplicated arrays, durations, bytes, global flags, collision policy, provenance, tables, and progress       |
-| [settings.rs](settings.rs)       | `app()` with a local command factory      | Nested commands, inherited profile, native URL/port values, production HTTPS policy, explicit stdin credentials, redaction, effective settings, provenance, and JSON Schema                 |
-| [terminal.rs](terminal.rs)       | `app()` with a single action              | Automatic spinner animation, label changes, live progress bars, status messages during progress, verbose diagnostics, failure cleanup, tables, and JSON/quiet output                        |
-| [async_build.rs](async_build.rs) | `app()` with bound inputs and state       | Command-bound native values, explicit state construction, shared globals, async derives/actions/middleware, application-owned Tokio, live spinner/progress, JSON and quiet output           |
+| Example                          | CLI logic                                 | What it demonstrates                                                                                                                                                                                                  |
+| -------------------------------- | ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [release.rs](release.rs)         | `app()` near the top; version types below | Native `Version` and `Bump`, checked version arithmetic, config/env/CLI precedence, conditional secret prompts, typed derived plans, middleware, JSON encoding without Serde on input types                           |
+| [batch.rs](batch.rs)             | `app()`; job/result types below           | Variadic checked paths, nonzero worker counts, typed priority maps, validated/deduplicated arrays, durations, bytes, global flags, collision policy, provenance, tables, and progress                                 |
+| [settings.rs](settings.rs)       | `app()` with a local command factory      | Nested commands, inherited profile, native URL/port values, production HTTPS policy, explicit stdin credentials, redaction, effective settings, provenance, and JSON Schema                                           |
+| [terminal.rs](terminal.rs)       | `app()` with a single action              | Automatic spinner animation, label changes, live progress bars, status messages during progress, verbose diagnostics, failure cleanup, tables, and JSON/quiet output                                                  |
+| [async_build.rs](async_build.rs) | `app()` with bound inputs and state       | Command-bound native values, explicit state construction, shared globals, async derives/actions/middleware, application-owned Tokio, live spinner/progress, JSON and quiet output                                     |
+| [manifest.rs](manifest.rs)       | `app()` with named bundles; helpers below | Named input structs, a shared `flags!` bundle, one scan pipeline inherited into two commands, a struct middleware, typed sync and async stages, concurrent fingerprinting under a semaphore, drift tables, exit codes |
+| [greet.rs](greet.rs)             | `app()` with one bound command            | A positional name, a boolean alias, and a native `u16` repeat count bound to one action                                                                                                                               |
+| [deploy.rs](deploy.rs)           | `app()`; the region enum below            | A native `FromStr` enum with choices, a global region flag, a sensitive token from `DEPLOY_TOKEN`, dynamic derived state, and a nested `db seed` group                                                                |
 
-These examples build release and batch plans, inspect settings, and simulate work. Running them
-does not upload artifacts, copy/move/link files, or write configuration.
+These examples build release, batch, and deployment plans, inspect settings, and
+simulate work. Running them does not upload artifacts, copy/move/link files,
+contact a service, or write configuration. The manifest example writes only the
+`--out` file.
 
 The release and settings examples require the opt-in `url` integration. Cargo
 records required features for each example. The commands below retain the
 default completion and terminal features.
+
+## Manifest fingerprinting
+
+```sh
+cargo run -p fujo --example manifest -- build . --out manifest.json
+cargo run -p fujo --example manifest -- verify . --manifest manifest.json
+cargo run -p fujo --example manifest -- verify . --manifest manifest.json --json
+cargo run -p fujo --example manifest -- build . --out manifest.json --force --jobs 8 --ignore .git,target,docs
+cargo run -p fujo --example manifest -- verify . --explain
+```
+
+`build` walks the directory, skipping names in `--ignore`, fingerprints every
+file concurrently with `--jobs` workers, and writes a JSON manifest of relative
+paths, sizes, and FNV-1a digests. `verify` repeats the walk and reports changed,
+missing, and added paths as a table or JSON; drift exits with status 1 without an
+error. An existing manifest is only overwritten with `--force`.
+
+`--jobs` and `--ignore` are declared once in a `flags!` struct, registered at the
+root, and included as a field of each command's `inputs!` struct, so both
+handlers read `globals.jobs` by name. The worker semaphore is a root pipeline;
+`Cli::share` registers it, and it is built once per invocation from `--jobs`.
+Scanning is a second `fujo::pipeline`: it takes the semaphore with `shared`,
+lists files in a sync derive, and wraps every later stage in the `Timed` struct
+middleware. Each command inherits it, then adds an async derive that
+fingerprints under the semaphore while a progress bar advances, and an action.
+`build` guards the output file with a `tap` before the scan; `verify` adds a
+sync middleware after fingerprinting that prints the summary before the action
+renders the table. `manifest build . --explain` lists these stages and runs
+nothing. Environment names are
+`MANIFEST_JOBS` and `MANIFEST_IGNORE`; configuration supports `jobs`, `ignore`,
+and `manifest`.
 
 ## Typed async build
 
@@ -33,7 +69,8 @@ The demo binds a shared profile, a native nonzero job count, and a native durati
 to its callbacks. An async derive constructs `Build`; the action receives that
 state directly. `tokio::time::sleep` yields while the output spinner ticks and
 the action advances its progress bar. Tokio is a dev dependency used by this
-example; Fujo itself selects no executor. `greet.rs` also uses bound inputs.
+example; Fujo itself selects no executor. `greet.rs` also uses bound inputs,
+and `manifest.rs` binds named structs.
 
 The release, batch, settings, and terminal examples retain the dynamic handle
 API. Their compile-time checks establish value and presence types, while handle
@@ -70,9 +107,10 @@ skips the success table. `--verbose` adds diagnostics between progress updates;
 array on stdout and keeps human messages on stderr. Piping suppresses animation.
 
 The release and batch planners finish immediately, so they usually cannot display
-multiple frames. This showcase intentionally paces simulated work. Captures omit
-transient frames and retain logical activity events; the Unix PTY check in
-`scripts/check-terminal.py` verifies real frame timing and terminal rendering.
+multiple frames. This showcase paces simulated work over about five seconds.
+Captures omit transient frames and retain logical activity events; the Unix PTY
+check in `scripts/check-terminal.py` verifies real frame timing and terminal
+rendering.
 
 ## Release planner
 
@@ -106,20 +144,20 @@ The default configuration discovery uses the `shipyard` name. Example contents:
 
 `SHIPYARD_VERSION` overrides `release.from`; `--from` overrides both. All registry
 URLs must use HTTPS. The version parser accepts three decimal `u32` components
-without leading zeros; it is intentionally a small A.B.C release model, with
-checked increments.
+without leading zeros; it is a small A.B.C release model with checked
+increments.
 
 ## Batch planner
 
 ```sh
 cargo run -p fujo --example batch -- plan Cargo.toml README.md \
   --output planned-output --workers 8 --timeout 1m30s --budget 2mb \
-  --tag fast,local,fast --priority README.md=20 --explain --json
+  --tag fast,local,fast --priority README.md=20 --sources --json
 ```
 
 The result contains one job per input, a deduplicated tag list, numeric
 priorities, an 8-worker limit, a 90,000ms timeout, and a 2,097,152-byte budget.
-`--explain` includes winning-source provenance. Omit `--json` for a table.
+`--sources` includes winning-source provenance. Omit `--json` for a table.
 
 Workers are `NonZeroU16`, constrained to 1–64. Priority values are `u16`,
 constrained to 0–100. Duplicate priority keys fail. Input files must exist;
@@ -162,12 +200,38 @@ Example `settings` configuration:
 Use `--config PATH` to select a file explicitly. Without it, each example uses
 the project/user/system discovery described in the main README.
 
+## Greeting
+
+```sh
+cargo run -p fujo --example greet -- Ada --loud --times 2
+cargo run -p fujo --example greet -- --help
+cargo run -p fujo --example greet -- completions bash
+```
+
+`greet` binds a positional name, a `--loud`/`-l` boolean, and a native `u16`
+`--times`/`-t` count to one action and repeats the greeting `--times` times.
+
+## Deployment planner
+
+```sh
+cargo run -p fujo --example deploy -- db seed --json
+DEPLOY_TOKEN=example-token cargo run -p fujo --example deploy -- deploy prod --region eu --json
+```
+
+`deploy` requires a token from `--token` or `DEPLOY_TOKEN`; without one the
+derive fails with `AUTH_REQUIRED` before the action runs. `--region` is a native
+`FromStr` enum with `us` and `eu` choices, declared as a global flag and
+supplied through `DEPLOY_REGION` or the `deploy.region` config key. `db seed`
+runs without credentials. The example simulates deployment and contacts no
+service.
+
 ## Type and behavior checks
 
 ```sh
 cargo test -p fujo --features url --test example_clis
 cargo test -p fujo --test typed --test async_execution --test lifecycle_reference
 cargo test -p fujo --doc
+cargo test -p fujo-core --doc
 cargo check -p fujo --features url --examples
 ```
 
@@ -188,10 +252,18 @@ directory is not created. Cross-input policies and filesystem facts are checked
 at runtime; the compiler enforces input value types and presence accessors.
 
 Bound-input compile-fail checks also reject unrelated handle reads, undeclared
-bundle elements, wrong native value types, missing state, and positional inputs
-in root globals. Async continuations cannot be invoked twice. Runtime tests
-exercise borrowed non-Clone inputs, local state across awaits, globals at nested
-command positions, failed derives, middleware wrapping, and dropped invocations.
+bundle elements, wrong native value types, missing state, positional inputs
+in root globals, mismatched handles in a named struct, positional fields in a
+`flags!` struct, asynchronous stages after a synchronous typed middleware, and
+inheriting a pipeline into a command with a synchronous middleware. Async
+continuations cannot be invoked twice. Runtime tests exercise borrowed non-Clone
+inputs, local state across awaits, globals at nested command positions, failed
+derives, middleware wrapping, typed middleware ordering and short-circuits,
+struct stages reused across commands, `tap`, `map`, `catch`, `finally`,
+`retry`, `timeout`, inherited and shared pipelines, stage listings and
+`--explain`, named bundle registration, and dropped invocations.
+The manifest tests write into temporary directories and check digests, drift
+reports, overwrite guards, and CLI/env/config precedence for the shared globals.
 
 Every example supports `--help`, `--help --json`, and
 `completions bash|zsh|fish|powershell`. For example:

@@ -1,4 +1,3 @@
-//! Portable definition documents and JSON Schema for resolved input.
 use crate::command::CommandSchema;
 use crate::command::ProgramSchema;
 use crate::schema::InputSchema;
@@ -39,7 +38,9 @@ fn property(input: &InputSchema) -> Value {
         Kind::KeyValue => {
             json!({"type":"object", "additionalProperties":input.element.as_deref().map(property).unwrap_or(json!({"type":"string"}))})
         }
+        #[cfg(feature = "url")]
         Kind::Url => json!({"type":"string", "format":"uri"}),
+        #[cfg(feature = "chrono")]
         Kind::Date => json!({"type":"string", "format":"date-time"}),
         Kind::Custom => json!({}),
     });
@@ -75,7 +76,7 @@ fn property(input: &InputSchema) -> Value {
     }
     if input.sensitive {
         object.insert("writeOnly".into(), json!(true));
-    } else if let Some(default) = &input.default_value {
+    } else if let Some(default) = input.default_json() {
         object.insert("default".into(), default.clone());
     }
     value
@@ -87,7 +88,7 @@ pub fn definition(program: &ProgramSchema) -> Value {
 fn element_definition(input: &InputSchema) -> Value {
     let mut value = serde_json::to_value(input).expect("element serialization");
     if !input.sensitive
-        && let Some(default) = &input.default_value
+        && let Some(default) = input.default_json()
     {
         value["defaultValue"] = default.clone();
     }

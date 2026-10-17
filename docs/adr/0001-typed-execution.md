@@ -79,4 +79,4 @@ Reference checks compare JSON semantically without overwriting recorded files.
 The native lifecycle tests additionally verify plugin failures and cancellation.
 Rust records a failed activity finish on Drop; TS capture omits a framework
 cleanup event after an action error. The lifecycle comparison names this
-intentional difference explicitly rather than dropping it from the fixtures.
+difference explicitly and keeps the case in the fixtures.

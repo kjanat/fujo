@@ -1,4 +1,3 @@
-//! A typed async build simulation; Tokio belongs to this application, not Fujo.
 use fujo::Cli;
 use fujo::CliError;
 use fujo::Command;
@@ -12,12 +11,12 @@ pub fn app() -> Cli {
         .env("BUILD_PROFILE")
         .default("dev".into()),);
     let jobs = flag::parse::<NonZeroU16>("jobs")
-        .default(NonZeroU16::new(12).unwrap())
+        .default(NonZeroU16::new(12).expect("nonzero constant"))
         .validate(|n| {
             if n.get() <= 100 {
                 Ok(())
             } else {
-                Err(CliError::validation("INVALID_JOBS", "Use 1–100 jobs"))
+                Err(CliError::validation("INVALID_JOBS", "Use 1-100 jobs"))
             }
         });
     let delay = flag::duration("delay")
@@ -66,6 +65,7 @@ pub fn app() -> Cli {
             }
         });
     Cli::new("async-build")
+        .version(env!("CARGO_PKG_VERSION"))
         .inputs(globals)
         .default(command)
         .completions()
@@ -78,6 +78,6 @@ struct Build {
 }
 
 #[tokio::main(flavor = "current_thread")]
-async fn main() -> std::process::ExitCode {
+pub async fn main() -> std::process::ExitCode {
     app().run_async().await
 }

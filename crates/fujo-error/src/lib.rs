@@ -15,7 +15,6 @@ pub enum ErrorKind {
     Validation,
 }
 
-/// Stable machine code, human message, process exit code, and optional details.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CliError {
@@ -66,7 +65,6 @@ impl CliError {
         self.exit_code = code;
         self
     }
-    /// Aggregate a non-empty set of validation errors, retaining a lone error unchanged.
     pub fn aggregate(first: Self, remaining: impl IntoIterator<Item = Self>) -> Self {
         let mut errors: Vec<_> = std::iter::once(first).chain(remaining).collect();
         if errors.len() == 1 {

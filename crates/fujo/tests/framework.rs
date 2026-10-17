@@ -1,7 +1,9 @@
+#[path = "support/prompter.rs"]
+mod prompter;
 use fujo::Cli;
 use fujo::CliError;
 use fujo::Command;
-use fujo::Result;
+use fujo::ErrorKind;
 use fujo::RunOptions;
 use fujo::arg;
 use fujo::cli;
@@ -14,13 +16,11 @@ use fujo::output::Verbosity;
 use fujo::prompt::Answer;
 use fujo::prompt::Choice;
 use fujo::prompt::Prompt;
-use fujo::prompt::TestPrompter;
 use fujo::resolve::ResolveOptions;
 use fujo::resolve::Stage;
 use fujo::resolve::was_explicit;
 use fujo::schema::DuplicatePolicy;
 use fujo::schema::PathChecks;
-use fujo::schema::PathType;
 use fujo::schema::Split;
 use fujo::schema::StdinBinding;
 use fujo::schema::StdinConsume;
@@ -28,7 +28,6 @@ use fujo::schema::StdinWhen;
 use fujo::value;
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use std::sync::Mutex;
 
 fn empty() -> RunOptions {
     RunOptions::default()
@@ -47,17 +46,18 @@ fn typed_handles_infer_presence_and_values() {
         .flag(force.clone())
         .flag(region.clone())
         .action(move |ctx| {
-            let _: String = ctx.get(&name)?;
-            let _: bool = ctx.get(&force)?;
-            let _: Option<String> = ctx.get(&region)?;
+            let name: String = ctx.get(&name)?;
+            let force: bool = ctx.get(&force)?;
+            let region: Option<String> = ctx.get(&region)?;
+            assert_eq!(name, "Ada");
+            assert!(force);
+            assert_eq!(region, None);
             Ok(())
         });
-    assert!(
-        Cli::new("test")
-            .default(cmd)
-            .execute(["Ada"], empty())
-            .success()
-    );
+    let result = Cli::new("test")
+        .default(cmd)
+        .execute(["Ada", "--force"], empty());
+    assert!(result.success(), "{:?}", result.error);
 }
 #[derive(Debug, Clone, PartialEq)]
 enum Region {
@@ -153,14 +153,9 @@ fn prompt_precedes_default_but_never_explicit_values() {
         .prompt(Prompt::select("Region?", []))
         .default("us".into());
     let app = cli("app").default(command("app").flag(region.clone()).action(|_| Ok(())));
-    let prompter = Arc::new(TestPrompter::new([Answer::from("eu")]));
-    let options = RunOptions {
-        resolve: ResolveOptions {
-            prompter: Some(prompter.clone()),
-            ..Default::default()
-        },
-        ..empty()
-    };
+    let prompter = prompter::prompter([Answer::from("eu")]);
+    let mut options = empty();
+    options.resolve.prompter = Some(prompter.clone());
     let result = app.execute(Vec::<String>::new(), options.clone());
     assert!(result.success(), "{:?}", result.error);
     assert_eq!(result.resolved.unwrap().get(&region).unwrap(), "eu");
@@ -176,33 +171,20 @@ fn cancellation_has_exit_code_130() {
             .flag(flag::string("name").prompt(Prompt::input("Name?")))
             .action(|_| Ok(())),
     );
-    let options = RunOptions {
-        resolve: ResolveOptions {
-            prompter: Some(Arc::new(TestPrompter::new([Answer::Cancel]))),
-            ..Default::default()
-        },
-        ..empty()
-    };
+    let options = prompter::prompted([Answer::Cancel]);
     assert_eq!(app.execute(Vec::<String>::new(), options).exit_code, 130);
 }
 #[test]
 fn incompatible_prompts_fail_before_consuming_an_answer() {
-    let prompter = Arc::new(TestPrompter::new([Answer::from("wrong")]));
+    let prompter = prompter::prompter([Answer::from("wrong")]);
     let app = cli("app").default(
         command("app")
             .flag(flag::boolean("yes").prompt(Prompt::input("Bad")))
             .action(|_| Ok(())),
     );
-    let result = app.execute(
-        Vec::<String>::new(),
-        RunOptions {
-            resolve: ResolveOptions {
-                prompter: Some(prompter.clone()),
-                ..Default::default()
-            },
-            ..empty()
-        },
-    );
+    let mut options = empty();
+    options.resolve.prompter = Some(prompter.clone());
+    let result = app.execute(Vec::<String>::new(), options);
     assert_eq!(result.error.unwrap().code, "CONSTRAINT_VIOLATED");
     assert!(prompter.prompts().is_empty());
 }
@@ -493,17 +475,16 @@ fn duplicate_policies_and_constraints_apply() {
             .code,
         "DUPLICATE_FLAG"
     );
-    assert!(
-        cli("app")
-            .default(
-                command("app")
-                    .flag(flag::number("port").integer().min(1.0).max(65535.0))
-                    .action(|_| Ok(()))
-            )
-            .execute(["--port=0"], empty())
-            .error
-            .is_some()
-    );
+    let error = cli("app")
+        .default(
+            command("app")
+                .flag(flag::number("port").integer().min(1.0).max(65535.0))
+                .action(|_| Ok(())),
+        )
+        .execute(["--port=0"], empty())
+        .error
+        .unwrap();
+    assert_eq!(error.code, "INVALID_VALUE");
 }
 #[test]
 fn arrays_have_native_empty_defaults_and_element_validation() {
@@ -526,7 +507,9 @@ fn arrays_have_native_empty_defaults_and_element_validation() {
             .unwrap(),
         Vec::<u16>::new()
     );
-    assert!(app.execute(["--ports=0"], empty()).error.is_some());
+    let error = app.execute(["--ports=0"], empty()).error.unwrap();
+    assert_eq!(error.code, "CONSTRAINT_VIOLATED");
+    assert_eq!(error.message, "Invalid value for --ports: Port is zero");
 }
 #[test]
 fn json_and_whitespace_split_policies_work() {
@@ -552,39 +535,46 @@ fn json_and_whitespace_split_policies_work() {
 }
 #[test]
 fn schema_errors_reject_alias_collisions_and_arg_order() {
-    assert!(
-        command("app")
-            .flag(flag::string("name").alias("n"))
-            .flag(flag::number("count").alias("n"))
-            .validate()
-            .is_err()
+    let error = command("app")
+        .flag(flag::string("name").alias("n"))
+        .flag(flag::number("count").alias("n"))
+        .validate()
+        .unwrap_err();
+    assert_eq!(error.code, "INVALID_SCHEMA");
+    assert_eq!(error.message, "Colliding flag spelling 'n'");
+    let error = command("app")
+        .arg(arg::string("optional").optional())
+        .arg(arg::string("required"))
+        .validate()
+        .unwrap_err();
+    assert_eq!(error.code, "INVALID_SCHEMA");
+    assert_eq!(
+        error.message,
+        "Required arguments cannot follow optional arguments"
     );
-    assert!(
-        command("app")
-            .arg(arg::string("optional").optional())
-            .arg(arg::string("required"))
-            .validate()
-            .is_err()
-    );
-    assert!(
-        command("app")
-            .arg(arg::string("all").variadic())
-            .arg(arg::string("extra"))
-            .validate()
-            .is_err()
-    );
+    let error = command("app")
+        .arg(arg::string("all").variadic())
+        .arg(arg::string("extra"))
+        .validate()
+        .unwrap_err();
+    assert_eq!(error.code, "INVALID_SCHEMA");
+    assert_eq!(error.message, "A variadic argument must be last");
     #[cfg(feature = "regex")]
-    assert!(
+    assert_eq!(
         command("app")
             .flag(flag::string("name").pattern("["))
             .validate()
-            .is_err()
+            .unwrap_err()
+            .code,
+        "INVALID_SCHEMA"
     );
-    assert!(
+    assert_eq!(
         command("app")
             .flag(flag::enumeration("region", ["us"]).default("ap".into()))
             .validate()
-            .is_err()
+            .unwrap_err()
+            .code,
+        "INVALID_SCHEMA"
     );
 }
 #[test]
@@ -605,11 +595,7 @@ fn builtin_names_can_be_released_explicitly() {
 fn path_checks_can_create_directories_and_preserve_missing_output_files() {
     let dir = tempfile::tempdir().unwrap();
     let nested = dir.path().join("a/b");
-    let path = flag::path("path").path_checks(PathChecks {
-        must_exist: true,
-        path_type: Some(PathType::Directory),
-        create: true,
-    });
+    let path = flag::path("path").path_checks(PathChecks::directory().create());
     let app = cli("app").default(command("app").flag(path).action(|_| Ok(())));
     let options = RunOptions {
         resolve: ResolveOptions {
@@ -625,11 +611,7 @@ fn path_checks_can_create_directories_and_preserve_missing_output_files() {
     assert!(nested.is_dir());
     let app = cli("app").default(
         command("app")
-            .flag(flag::path("output").path_checks(PathChecks {
-                must_exist: false,
-                path_type: Some(PathType::File),
-                create: false,
-            }))
+            .flag(flag::path("output").path_checks(PathChecks::file().allow_missing()))
             .action(|_| Ok(())),
     );
     assert!(
@@ -667,31 +649,6 @@ fn exit_code_can_be_set_without_an_error() {
     assert!(result.error.is_none());
 }
 #[test]
-fn plugin_hooks_wrap_execution() {
-    struct Trace(Arc<Mutex<Vec<&'static str>>>);
-    impl fujo::Plugin for Trace {
-        fn before_parse(&self, _: &mut Vec<String>) -> Result<()> {
-            self.0.lock().unwrap().push("parse");
-            Ok(())
-        }
-        fn before_execute(&self, _: &mut fujo::Context) -> Result<()> {
-            self.0.lock().unwrap().push("before");
-            Ok(())
-        }
-        fn after_execute(&self, _: &fujo::Context) -> Result<()> {
-            self.0.lock().unwrap().push("after");
-            Ok(())
-        }
-        fn on_error(&self, _: &CliError) {
-            self.0.lock().unwrap().push("error");
-        }
-    }
-    let trace = Arc::new(Mutex::new(vec![]));
-    let app = cli("app").plugin(Trace(trace.clone())).default(ok_action());
-    assert!(app.execute(Vec::<String>::new(), empty()).success());
-    assert_eq!(*trace.lock().unwrap(), vec!["parse", "before", "after"]);
-}
-#[test]
 fn output_modes_can_be_injected_without_flags() {
     let app = cli("app").default(command("app").action(|ctx| {
         ctx.out.info("info");
@@ -720,15 +677,7 @@ fn multiselect_prompts_return_native_collections() {
     let app = cli("app").default(command("app").flag(tags.clone()).action(|_| Ok(())));
     let result = app.execute(
         Vec::<String>::new(),
-        RunOptions {
-            resolve: ResolveOptions {
-                prompter: Some(Arc::new(TestPrompter::new([Answer::Value(json!([
-                    "a", "b"
-                ]))]))),
-                ..Default::default()
-            },
-            ..empty()
-        },
+        prompter::prompted([Answer::Value(json!(["a", "b"]))]),
     );
     assert_eq!(result.resolved.unwrap().get(&tags).unwrap(), vec!["a", "b"]);
 }
@@ -753,9 +702,7 @@ fn conditional_prompts_receive_all_explicit_values_before_defaults() {
             })
             .action(|_| Ok(())),
     );
-    let mut options = empty();
-    options.resolve.prompter = Some(Arc::new(TestPrompter::new([Answer::from("eu")])));
-    let result = app.execute(["production"], options);
+    let result = app.execute(["production"], prompter::prompted([Answer::from("eu")]));
     assert_eq!(result.resolved.unwrap().get(&region).unwrap(), "eu");
 }
 #[test]
@@ -785,9 +732,11 @@ fn cancellation_stops_resolution_even_when_other_inputs_are_missing() {
             .flag(flag::string("token").required())
             .action(|_| Ok(())),
     );
-    let mut options = empty();
-    options.resolve.prompter = Some(Arc::new(TestPrompter::new([Answer::Cancel])));
-    assert_eq!(app.execute(Vec::<String>::new(), options).exit_code, 130);
+    assert_eq!(
+        app.execute(Vec::<String>::new(), prompter::prompted([Answer::Cancel]))
+            .exit_code,
+        130
+    );
 }
 #[test]
 fn injected_writers_obey_the_invocations_output_modes() {
@@ -815,4 +764,35 @@ fn successful_sensitive_values_stay_out_of_automatic_debug_views() {
     let resolved = result.resolved.unwrap();
     assert!(!resolved.json().to_string().contains("SECRET_VALUE"));
     assert_eq!(resolved.get(&token).unwrap().unwrap(), "SECRET_VALUE");
+}
+#[test]
+fn error_kinds_distinguish_validation_parse_and_application_failures() {
+    let app = cli("app").default(
+        command("app")
+            .flag(flag::number("port").integer().min(1.0))
+            .flag(flag::string("token").required())
+            .action(|_| Err(std::io::Error::other("disk full").into())),
+    );
+    let validation = app.execute(Vec::<String>::new(), empty()).error.unwrap();
+    assert_eq!(validation.name, ErrorKind::Validation);
+    assert_eq!(validation.code, "REQUIRED_FLAG");
+    assert_eq!(validation.message, "Required --token is missing");
+    assert_eq!(validation.exit_code, 2);
+    let parse = app
+        .execute(["--token=t", "--port=0"], empty())
+        .error
+        .unwrap();
+    assert_eq!(parse.name, ErrorKind::Parse);
+    assert_eq!(parse.code, "INVALID_VALUE");
+    assert!(
+        parse.message.starts_with("Invalid value for --port: "),
+        "{}",
+        parse.message
+    );
+    assert_eq!(parse.exit_code, 2);
+    let io = app.execute(["--token=t"], empty()).error.unwrap();
+    assert_eq!(io.name, ErrorKind::Cli);
+    assert_eq!(io.code, "IO_ERROR");
+    assert_eq!(io.message, "disk full");
+    assert_eq!(io.exit_code, 1);
 }

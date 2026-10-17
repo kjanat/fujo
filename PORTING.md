@@ -3,7 +3,8 @@
 Fujo is a native Rust port of DreamCLI. The
 [DreamCLI TypeScript project](https://github.com/kjanat/dreamcli) in `../dreamcli`
 is the behavior reference, initially inspected at commit
-[`f87c1672e10b27c066524a0715bfea0f714dd5bc`](https://github.com/kjanat/dreamcli/commit/f87c1672e10b27c066524a0715bfea0f714dd5bc). The Rust implementation is organized by
+[`f87c1672e10b27c066524a0715bfea0f714dd5bc`](https://github.com/kjanat/dreamcli/commit/f87c1672e10b27c066524a0715bfea0f714dd5bc).
+The Rust implementation is organized by
 crate responsibilities and uses Rust types and host interfaces.
 
 ## Preserved behavior
@@ -30,40 +31,40 @@ or identical text formatting.
 
 ## Rust API choices
 
-| TypeScript surface                      | Rust surface                                                         |
-| --------------------------------------- | -------------------------------------------------------------------- |
-| Inferred object keys                    | Bound input bundles, or named typed handles with distinct surfaces   |
-| `undefined`                             | `Option<T>`                                                          |
-| Required/defaulted inference            | Presence marker types; `get` returns `T` or `Option<T>`              |
-| `number`                                | `f64` for compatibility, or any native integer through `parse::<T>`  |
-| String paths                            | `PathBuf`                                                            |
-| Millisecond numbers                     | `std::time::Duration`                                                |
-| Byte size numbers                       | `u64`, rounded and range checked                                     |
-| JavaScript `URL` / `Date`               | `url::Url` / `chrono::DateTime<Utc>`                                 |
-| Standard Schema / custom callbacks      | `FromStr`, native decoder closures, and typed validators             |
-| Context object intersections            | Typed owned state transformations, or a dynamic type-indexed store   |
-| Runtime-specific Node/Bun/Deno adapters | `Runtime`, `FileSystem`, `ConfigReader`, `PromptEngine`, and `Write` |
-| `package.json` discovery                | Explicit metadata or `cargo_manifest!()`                             |
-| Process exit calls                      | Return `std::process::ExitCode` from `main`                          |
+| TypeScript surface                      | Rust surface                                                             |
+| --------------------------------------- | ------------------------------------------------------------------------ |
+| Inferred object keys                    | Bound tuples, `inputs!` structs, or named handles with distinct surfaces |
+| `undefined`                             | `Option<T>`                                                              |
+| Required/defaulted inference            | Presence marker types; `get` returns `T` or `Option<T>`                  |
+| `number`                                | `f64` for compatibility, or any native integer through `parse::<T>`      |
+| String paths                            | `PathBuf`                                                                |
+| Millisecond numbers                     | `std::time::Duration`                                                    |
+| Byte size numbers                       | `u64`, rounded and range checked                                         |
+| JavaScript `URL` / `Date`               | `url::Url` / `chrono::DateTime<Utc>`                                     |
+| Standard Schema / custom callbacks      | `FromStr`, native decoder closures, and typed validators                 |
+| Context object intersections            | Typed owned state transformations, or a dynamic type-indexed store       |
+| Runtime-specific Node/Bun/Deno adapters | `Runtime`, `FileSystem`, `ConfigReader`, `PromptEngine`, and `Write`     |
+| `package.json` discovery                | Explicit metadata or `cargo_manifest!()`                                 |
+| Process exit calls                      | Return `std::process::ExitCode` from `main`                              |
 
-Rust supports synchronous callbacks and native async closures. Async applications
-await an async runner using their own executor. Borrowing local futures need no
-Send bound; callback captures remain Send + Sync. Synchronous middleware cannot
-wrap an async continuation and is rejected before execution; async wrappers can
-await synchronous tails. Config, prompts, filesystem preparation, and stdio
-remain synchronous. Writer-backed TTY spinners own a small standard
-library timer thread that stops and joins on completion or `Drop`; no executor
-is required. Progress handles render on explicit updates. A shared terminal line
-keeps logs and tables readable during activities. Transient frames are excluded
-from captures; logical activity events remain available in every output mode.
-Terminal prompts
-use line input; secret inputs use a native password reader rather than a JavaScript
-terminal widget implementation.
+Rust supports synchronous callbacks and native async closures, and the
+application supplies the executor; the
+[README](README.md#async-execution) states the sync/async mixing rules.
+Config, prompts, filesystem preparation, and stdio remain synchronous. Writer-backed
+TTY spinners own a small standard library timer thread; the thread stops and
+joins on completion or `Drop`, and no executor is required. Terminal prompts use line input;
+secret inputs use a native password reader.
 
 `Command::inputs` binds registered inputs to borrowed handler parameters and
 owned typed state. Its `Scope` has no arbitrary handle or type-map accessor.
 Each derive explicitly transforms its previous state; tuples or structs retain
-earlier state when needed. Dynamic `ctx.get()` still looks up surface/name and
+earlier state when needed. `inputs!` and `flags!` declare named bundles with the
+same registration step. A typed middleware receives the state at its position
+and a continuation for the later stages; a synchronous one excludes later
+asynchronous stages at compile time. Stages are values: types implementing
+`Middleware` or `Derive` plug into any command, and a `pipeline` built once is
+inherited by several commands or shared from the root. `--explain` lists a
+command's stages. Dynamic `ctx.get()` still looks up surface/name and
 checks the native type at runtime. Dynamic `ctx.state()` checks availability at
 runtime and replaces same-type values on insertion. These dynamic checks are
 distinct from the static guarantees of bound callbacks.
@@ -95,9 +96,8 @@ Custom application types can opt in with `encode_json` and `json_schema`; opaque
 types remain supported. Default descriptions control help independently of the
 runtime default. JSON help uses the Rust definition format below.
 
-Filesystem checks require an injected capability during process-free execution.
-The default policy records skipped checks; `Required` fails and `Disabled`
-explicitly opts out. Native execution supplies the filesystem automatically.
+Filesystem checks require an injected capability during process-free execution;
+the [README](README.md#configuration-and-testing) describes the skip policies.
 
 Filesystem capabilities use `&Path`, preserving native path names without JSON
 or UTF-8 conversion. Checks apply to opaque and non-Unicode native defaults too.
@@ -106,35 +106,17 @@ A scalar positional default becomes a one-element vector when converted with
 
 ## Optional integrations
 
-The public crate defaults to `completion`, `terminal-prompts`, and
-`terminal-activity`. `regex`, `url`, and `chrono` are independent opt-in features;
-their built-in factories and constraints are available only when enabled. Core
-has no default integrations. Output defaults to its terminal backend when used
-on its own, and the public crate forwards that feature explicitly. All internal
-core/output dependencies disable defaults so a minimal facade build stays minimal.
-
-Disabling a backend preserves its abstraction: injected prompt engines still
-resolve values, and activity handles still record lifecycle events and clean up
-on Drop. Without `terminal-activity`, handles emit no activity text or frames and
-no timer code is compiled. Duration and byte-size parsing use decimal scanners;
-Chrono's ISO date parser does not depend on regex constraints. Config, provenance,
-middleware, validation, typed/async execution, and schema exports remain available
-in every configuration. Serde and JSON remain mandatory representation choices.
-
-`scripts/check-features.py` verifies actual normal dependency graphs and behavior
-for minimal, default, all-features, and each isolated integration. Completion
-generation alone does not depend on regex, URL, or Chrono; output alone does not
-depend on parsing, resolution, or completion.
+The TypeScript package ships every integration; the Rust crate gates `regex`,
+`url`, and `chrono` behind the [Cargo features](README.md#cargo-features) listed
+in the README. `scripts/check-features.py` verifies the dependency graph and
+behavior of each configuration.
 
 ## Schema documents and formats
 
-The Rust definition document uses `format: "fujo"` and `version: 1`.
-The Fujo rename changes the former `dreamcli-rust` wire-format discriminator;
-the format version remains `1`. Consumers matching the old discriminator must
-update to `fujo`.
-It describes Rust input metadata and excludes executable callbacks. It is not the
-TypeScript definition document wire format and does not reconstruct custom Rust
-types or handlers. Input schemas use JSON Schema draft 2020-12 for the JSON
+The Rust definition document uses `format: "fujo"` and `version: 1`; the
+[README](README.md#configuration-and-testing) describes what it exports. It is
+not the TypeScript definition document wire format and does not reconstruct
+custom Rust types or handlers. Input schemas use JSON Schema draft 2020-12 for the JSON
 representation of supported values.
 
 CLI arguments must be valid UTF-8; invalid OS arguments produce a structured parse

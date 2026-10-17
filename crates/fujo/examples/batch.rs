@@ -1,4 +1,3 @@
-//! Plan a bounded batch of local file operations without copying, moving, or linking files.
 use fujo::Cli;
 use fujo::CliError;
 use fujo::Command;
@@ -40,7 +39,7 @@ pub fn app() -> Cli {
             if v.get() <= 64 {
                 Ok(())
             } else {
-                Err(CliError::validation("TOO_MANY_WORKERS", "Use 1–64 workers"))
+                Err(CliError::validation("TOO_MANY_WORKERS", "Use 1-64 workers"))
             }
         })
         .default(NonZeroU16::new(4).expect("nonzero constant"))
@@ -49,7 +48,7 @@ pub fn app() -> Cli {
     let timeout = flag::duration("timeout").default(Duration::from_secs(30));
     let budget = flag::bytes("budget").default(64 * 1024 * 1024);
     let tags = flag::array("tag", value::string().non_empty())
-        .separator(",")
+        .separator(',')
         .unique()
         .env("BATCH_TAGS");
     let priorities = flag::key_value_of(
@@ -60,14 +59,14 @@ pub fn app() -> Cli {
             } else {
                 Err(CliError::validation(
                     "INVALID_PRIORITY",
-                    "Priority must be 0–100",
+                    "Priority must be 0-100",
                 ))
             }
         }),
     )
     .duplicate_keys(DuplicatePolicy::Error)
     .default(BTreeMap::new());
-    let explain = flag::boolean("explain");
+    let sources = flag::boolean("sources");
     let plan_label = label.clone();
     let plan = Command::new("plan")
         .describe("Plan file jobs with native constraints and collision checks")
@@ -79,7 +78,7 @@ pub fn app() -> Cli {
         .flag(budget.clone())
         .flag(tags.clone())
         .flag(priorities.clone())
-        .flag(explain.clone())
+        .flag(sources.clone())
         .example(
             "{bin} a.txt b.txt -o out -j 8 --priority=a.txt=10 --json",
             "Plan a prioritized batch",
@@ -124,7 +123,7 @@ pub fn app() -> Cli {
                 budget: ctx.get(&budget)?,
                 tags: ctx.get(&tags)?,
                 jobs,
-                sources: ctx.get(&explain)?.then(|| json!(ctx.sources())),
+                sources: ctx.get(&sources)?.then(|| json!(ctx.sources())),
             })
         })
         .action(|ctx| {
@@ -176,6 +175,6 @@ struct BatchPlan {
     sources: Option<fujo::Value>,
 }
 
-fn main() -> std::process::ExitCode {
+pub fn main() -> std::process::ExitCode {
     app().run()
 }

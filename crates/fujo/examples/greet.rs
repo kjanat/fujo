@@ -4,7 +4,7 @@ use fujo::arg;
 use fujo::flag;
 use std::process::ExitCode;
 
-fn main() -> ExitCode {
+pub fn app() -> Cli {
     let name = arg::string("name").describe("Who to greet");
     let loud = flag::boolean("loud")
         .alias("l")
@@ -32,5 +32,8 @@ fn main() -> ExitCode {
         .version(env!("CARGO_PKG_VERSION"))
         .default(greet)
         .completions()
-        .run()
+}
+
+pub fn main() -> ExitCode {
+    app().run()
 }

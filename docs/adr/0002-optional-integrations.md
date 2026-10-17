@@ -13,7 +13,7 @@ Features only add capabilities, as required by Cargo feature unification.
 
 Gate specialized factories and constraints together with their dependencies.
 Keep metadata kinds available to completion and schema consumers. Unsupported
-specialized declarations fail validation instead of silently losing constraints.
+specialized declarations fail validation, so every declared constraint is enforced.
 Use small decimal scanners for duration/size values and a separate ISO shape
 check for Chrono, so neither integration needs the regex feature.
 

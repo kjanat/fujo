@@ -11,13 +11,13 @@ use serde_json::json;
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Token {
+pub(crate) enum Token {
     LongFlag { name: String, value: Option<String> },
     ShortFlags(String),
     Positional(String),
     Separator,
 }
-pub fn tokenize(argv: &[String]) -> Vec<Token> {
+pub(crate) fn tokenize(argv: &[String]) -> Vec<Token> {
     let mut past = false;
     argv.iter()
         .map(|raw| {
@@ -80,8 +80,6 @@ pub enum Occurrence {
 }
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct Parsed {
-    pub flags: BTreeMap<String, Value>,
-    pub args: BTreeMap<String, Value>,
     pub flag_occurrences: BTreeMap<String, Vec<Occurrence>>,
     pub arg_occurrences: BTreeMap<String, Vec<Occurrence>>,
 }
@@ -148,14 +146,19 @@ pub fn flag_lookup(
     lookup
 }
 
-/// Choose a conventional spelling only when it resolves to this exact input.
 pub fn canonical_flag_name(
     input: &InputSchema,
     flags: &[InputSchema],
     options: ParseOptions,
 ) -> String {
+    canonical_flag_name_with(&flag_lookup(flags, options), input)
+}
+pub fn canonical_flag_name_with(
+    lookup: &BTreeMap<String, (&InputSchema, bool)>,
+    input: &InputSchema,
+) -> String {
     let canonical = kebab(&input.name);
-    if flag_lookup(flags, options)
+    if lookup
         .get(&canonical)
         .is_some_and(|(target, negated)| !negated && target.name == input.name)
     {
@@ -217,13 +220,14 @@ pub fn parse(schema: &CommandSchema, argv: &[String], options: ParseOptions) -> 
                 i += 1;
             }
             Token::ShortFlags(chars) => {
-                let iter = chars.char_indices().peekable();
-                for (offset, c) in iter {
-                    let (flag, _) = lookup
+                for (offset, c) in chars.char_indices() {
+                    let (flag, negated) = lookup
                         .get(&c.to_string())
                         .copied()
                         .ok_or_else(|| unknown_flag(&c.to_string(), &schema.flags, false))?;
-                    let occurrences = if !flag.expects_value() {
+                    let occurrences = if negated {
+                        vec![Occurrence::Value(json!(false))]
+                    } else if !flag.expects_value() {
                         if flag.kind == Kind::Count {
                             vec![Occurrence::Increment]
                         } else {
@@ -272,20 +276,6 @@ pub fn parse(schema: &CommandSchema, argv: &[String], options: ParseOptions) -> 
             "Unexpected positional argument",
         ));
     }
-    for flag in &schema.flags {
-        if let Some(occurrences) = parsed.flag_occurrences.get(&flag.name) {
-            parsed
-                .flags
-                .insert(flag.name.clone(), project(flag, occurrences)?);
-        }
-    }
-    for arg in &schema.args {
-        if let Some(occurrences) = parsed.arg_occurrences.get(&arg.name) {
-            parsed
-                .args
-                .insert(arg.name.clone(), project(arg, occurrences)?);
-        }
-    }
     Ok(parsed)
 }
 fn missing(flag: &InputSchema) -> CliError {
@@ -324,7 +314,7 @@ pub(crate) fn decode_token(schema: &InputSchema, raw: &str) -> Result<Vec<Occurr
             .cli_split
             .values(raw)?
             .into_iter()
-            .map(|v| decode_element(schema, v, true).map(Occurrence::Value))
+            .map(|v| decode_element(schema, v, Stage::Cli).map(Occurrence::Value))
             .collect()
     } else {
         Ok(vec![Occurrence::Value(
@@ -332,8 +322,9 @@ pub(crate) fn decode_token(schema: &InputSchema, raw: &str) -> Result<Vec<Occurr
         )])
     }
 }
-pub(crate) fn decode_element(schema: &InputSchema, value: Value, cli: bool) -> Result<Value> {
+pub(crate) fn decode_element(schema: &InputSchema, value: Value, source: Stage) -> Result<Value> {
     let element = schema.element.as_deref().unwrap_or(schema);
+    let cli = source == Stage::Cli;
     if schema.kind == Kind::KeyValue {
         let (key, raw) = value
             .as_str()
@@ -347,16 +338,21 @@ pub(crate) fn decode_element(schema: &InputSchema, value: Value, cli: bool) -> R
                 )
             })?;
         let decoded = element
-            .decode_scalar(json!(raw), if cli { Stage::Cli } else { Stage::Env })
+            .decode_raw(json!(raw), source)
             .map_err(|e| schema.failure(&e.code, &e.message, cli))?;
         Ok(json!([key, decoded]))
     } else {
         element
-            .decode_scalar(value, if cli { Stage::Cli } else { Stage::Env })
+            .decode_raw(value, source)
             .map_err(|e| schema.failure(&e.code, &e.message, cli))
     }
 }
-pub(crate) fn project(schema: &InputSchema, occurrences: &[Occurrence]) -> Result<Value> {
+pub(crate) fn project(
+    schema: &InputSchema,
+    occurrences: &[Occurrence],
+    source: Stage,
+) -> Result<Value> {
+    let cli = source == Stage::Cli;
     let values: Vec<_> = occurrences
         .iter()
         .filter_map(|o| match o {
@@ -371,13 +367,13 @@ pub(crate) fn project(schema: &InputSchema, occurrences: &[Occurrence]) -> Resul
             match o {
                 Occurrence::Increment => {
                     count = count.checked_add(1).ok_or_else(|| {
-                        schema.failure("CONSTRAINT_VIOLATED", "Count overflow", true)
+                        schema.failure("CONSTRAINT_VIOLATED", "Count overflow", cli)
                     })?
                 }
                 Occurrence::Value(v) => {
                     count = v
                         .as_u64()
-                        .ok_or_else(|| schema.failure("TYPE_MISMATCH", "Invalid count", true))?
+                        .ok_or_else(|| schema.failure("TYPE_MISMATCH", "Invalid count", cli))?
                 }
                 _ => {}
             }
@@ -391,21 +387,21 @@ pub(crate) fn project(schema: &InputSchema, occurrences: &[Occurrence]) -> Resul
             }
             let pair = pair
                 .as_array()
-                .ok_or_else(|| schema.failure("TYPE_MISMATCH", "Expected entry pair", false))?;
+                .ok_or_else(|| schema.failure("TYPE_MISMATCH", "Expected entry pair", cli))?;
             let key = pair
                 .first()
                 .and_then(Value::as_str)
-                .ok_or_else(|| schema.failure("TYPE_MISMATCH", "Expected entry key", false))?;
+                .ok_or_else(|| schema.failure("TYPE_MISMATCH", "Expected entry key", cli))?;
             let value = pair
                 .get(1)
-                .ok_or_else(|| schema.failure("TYPE_MISMATCH", "Expected entry value", false))?;
+                .ok_or_else(|| schema.failure("TYPE_MISMATCH", "Expected entry value", cli))?;
             if entries.contains_key(key) {
                 match schema.duplicate_keys {
                     DuplicatePolicy::Error => {
                         return Err(schema.failure(
                             "CONSTRAINT_VIOLATED",
                             "Duplicate entry key",
-                            false,
+                            cli,
                         ));
                     }
                     DuplicatePolicy::First => continue,
@@ -427,6 +423,13 @@ pub(crate) fn project(schema: &InputSchema, occurrences: &[Occurrence]) -> Resul
         Ok(values.last().cloned().unwrap_or(Value::Null))
     }
 }
+pub fn spelling(name: &str) -> String {
+    if name.chars().count() == 1 {
+        format!("-{name}")
+    } else {
+        format!("--{name}")
+    }
+}
 fn unknown_flag(name: &str, flags: &[InputSchema], long: bool) -> CliError {
     let display = if long {
         format!("--{name}")
@@ -443,10 +446,11 @@ fn unknown_flag(name: &str, flags: &[InputSchema], long: bool) -> CliError {
                     .chain(
                         f.aliases
                             .iter()
-                            .filter(|a| !a.hidden && a.name.len() > 1)
+                            .filter(|a| !a.hidden)
                             .map(|a| a.name.as_str()),
                     )
                     .chain(f.negated_name.as_deref())
+                    .filter(|name| name.chars().count() > 1)
             })
             .collect();
         if let Some(suggest) = suggest_command(name, candidates.into_iter()) {

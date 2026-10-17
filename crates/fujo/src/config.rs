@@ -1,4 +1,3 @@
-//! Config discovery follows project ancestors, then user and system locations.
 use crate::CliError;
 use crate::Result;
 use serde_json::Value;
@@ -23,7 +22,6 @@ pub struct ConfigDirectories {
     pub user: Vec<PathBuf>,
     pub system: Vec<PathBuf>,
 }
-/// Resolve platform directories from named environment reads supplied by the host.
 pub fn config_directories(
     platform: Platform,
     mut env: impl FnMut(&str) -> Option<String>,
@@ -197,23 +195,22 @@ pub fn discover(
                 format!("No config loader for {ext}"),
             ));
         };
-        let value = value.map_err(|_| {
+        let value = value.map_err(|e| {
             CliError::new(
                 "CONFIG_PARSE_ERROR",
-                format!("Cannot parse config file {}", path.display()),
+                format!("Cannot parse config file {}: {}", path.display(), e.message),
             )
         })?;
         if !value.is_object() {
             return Err(CliError::new(
                 "CONFIG_PARSE_ERROR",
-                "Config must be an object",
+                format!("Config file {} must be an object", path.display()),
             ));
         }
         return Ok(Some(FoundConfig { path, value }));
     }
     Ok(None)
 }
-/// Native Rust package metadata comes from Cargo, supplied explicitly by the application.
 #[derive(Debug, Clone, Default)]
 pub struct Manifest {
     pub name: Option<String>,

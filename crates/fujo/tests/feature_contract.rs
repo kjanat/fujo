@@ -1,4 +1,5 @@
-//! Abstractions remain usable independently of optional native implementations.
+#[path = "support/prompter.rs"]
+mod prompter;
 use fujo::Cli;
 use fujo::Command;
 use fujo::RunOptions;
@@ -9,8 +10,6 @@ use fujo::output::Output;
 use fujo::output::OutputOptions;
 use fujo::prompt::Answer;
 use fujo::prompt::Prompt;
-use fujo::prompt::TestPrompter;
-use std::sync::Arc;
 
 #[test]
 fn injected_prompts_provenance_and_typed_state_work_without_terminal_ui() {
@@ -27,9 +26,7 @@ fn injected_prompts_provenance_and_typed_state_work_without_terminal_ui() {
                 ctx.out.json(&json!({"name":name}))
             }),
     );
-    let mut options = RunOptions::default();
-    options.resolve.prompter = Some(Arc::new(TestPrompter::new([Answer::from("Ada")])));
-    let result = app.execute(["--json"], options);
+    let result = app.execute(["--json"], prompter::prompted([Answer::from("Ada")]));
     assert!(result.success(), "{:?}", result.error);
     assert_eq!(result.stdout, "{\"name\":\"ADA\"}\n");
 }
@@ -52,6 +49,7 @@ fn duration_and_size_parsers_do_not_need_regex() {
         ("1ms2ms", "1 Kb", 3, 1024),
         ("250", "2\u{2003}kb", 250, 2048),
         ("0.5s", "12 ", 500, 12),
+        ("1s", "1kb ", 1000, 1024),
     ] {
         let result = app.execute(
             [format!("--timeout={timeout}"), format!("--size={size}")],
@@ -67,16 +65,18 @@ fn duration_and_size_parsers_do_not_need_regex() {
         ("1h30", "1kb"),
         ("1S", "1kb"),
         (".5s", "1kb"),
-        ("1s", "1kb "),
         ("1s", "1e3"),
         ("1s", "-1kb"),
+        ("1s", "1 k b"),
     ] {
-        assert!(
-            !app.execute(
-                [format!("--timeout={timeout}"), format!("--size={size}")],
-                RunOptions::default()
-            )
-            .success()
+        let result = app.execute(
+            [format!("--timeout={timeout}"), format!("--size={size}")],
+            RunOptions::default(),
+        );
+        assert_eq!(
+            result.error.unwrap().code,
+            "INVALID_VALUE",
+            "{timeout} {size}"
         );
     }
 }
@@ -109,6 +109,7 @@ fn logical_activities_are_recorded_with_or_without_the_native_backend() {
 #[cfg(not(feature = "terminal-activity"))]
 #[test]
 fn a_tty_with_writers_still_has_no_animation_when_the_backend_is_disabled() {
+    use std::sync::Arc;
     #[derive(Clone)]
     struct Writer(Arc<std::sync::Mutex<Vec<u8>>>);
     impl std::io::Write for Writer {
@@ -170,9 +171,12 @@ fn url_parsing_is_an_independent_native_integration() {
             .stdout,
         "https\n"
     );
-    assert!(
-        !app.execute(["--endpoint=http://example.com"], RunOptions::default())
-            .success()
+    assert_eq!(
+        app.execute(["--endpoint=http://example.com"], RunOptions::default())
+            .error
+            .unwrap()
+            .code,
+        "INVALID_VALUE"
     );
 }
 
@@ -206,9 +210,12 @@ fn chrono_parsing_does_not_require_the_regex_feature() {
         "2026-10-15T12:30:00.1234Z",
         "2026-10-15t12:30Z",
     ] {
-        assert!(
-            !app.execute([format!("--date={value}")], RunOptions::default())
-                .success(),
+        assert_eq!(
+            app.execute([format!("--date={value}")], RunOptions::default())
+                .error
+                .unwrap()
+                .code,
+            "INVALID_VALUE",
             "{value}"
         );
     }

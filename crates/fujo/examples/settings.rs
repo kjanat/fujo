@@ -1,4 +1,3 @@
-//! Nested settings inspection with source provenance, explicit stdin, and redacted credentials.
 use fujo::Cli;
 use fujo::CliError;
 use fujo::Command;
@@ -41,7 +40,7 @@ pub fn app() -> Cli {
                 ..Default::default()
             });
         let features = flag::array("feature", value::enumeration(["cache", "metrics", "trace"]))
-            .separator(",")
+            .separator(',')
             .unique()
             .env("SETTINGS_FEATURES")
             .config("features");
@@ -125,6 +124,6 @@ struct Effective {
     address: String,
     authenticated: bool,
 }
-fn main() -> std::process::ExitCode {
+pub fn main() -> std::process::ExitCode {
     app().run()
 }

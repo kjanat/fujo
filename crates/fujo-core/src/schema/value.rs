@@ -1,5 +1,3 @@
-//! Reusable scalar parsers without input bindings or defaults.
-//!
 //! ```compile_fail
 //! use fujo_core::schema::{flag, value};
 //! let tags = flag::array("tags", value::string().env("TAGS"));
@@ -15,6 +13,26 @@
 //! ```compile_fail
 //! use fujo_core::schema::flag;
 //! let name = flag::string("name").unique();
+//! ```
+//! ```compile_fail
+//! use fujo_core::schema::{flag, value};
+//! let tags = flag::array("tags", value::string()).separator("");
+//! ```
+//! ```compile_fail
+//! use fujo_core::schema::flag;
+//! let region = flag::enumeration("region", [] as [&str; 0]);
+//! ```
+//! ```compile_fail
+//! use fujo_core::schema::flag;
+//! let color = flag::string("color").choices([] as [&str; 0]);
+//! ```
+//! ```compile_fail
+//! use fujo_core::schema::{PathChecks, flag};
+//! let out = flag::path("out").path_checks(PathChecks::file().create());
+//! ```
+//! ```compile_fail
+//! use fujo_core::schema::flag;
+//! let name = flag::string("name").negatable();
 //! ```
 use super::*;
 use std::marker::PhantomData;
@@ -36,7 +54,6 @@ impl<T> ValueParser<T> {
     fn from_input<P>(input: Input<T, P>) -> Self {
         let mut schema = input.into_schema();
         schema.declaration.required = false;
-        schema.declaration.default_value = None;
         schema.native_default = None;
         Self {
             schema,
@@ -61,7 +78,7 @@ impl<T> ValueParser<T> {
     {
         Self::from_input(self.flag("value").validate(validator))
     }
-    pub fn choices(self, choices: impl IntoIterator<Item = impl Into<String>>) -> Self {
+    pub fn choices<C: Into<String>, const N: usize>(self, choices: [C; N]) -> Self {
         Self::from_input(self.flag("value").choices(choices))
     }
     pub fn encode_json(self, encoder: impl Fn(&T) -> Value + Send + Sync + 'static) -> Self
@@ -115,7 +132,7 @@ pub fn number() -> ValueParser<f64> {
 pub fn boolean() -> ValueParser<bool> {
     ValueParser::from_input(flag::boolean("value"))
 }
-pub fn enumeration(choices: impl IntoIterator<Item = impl Into<String>>) -> ValueParser<String> {
+pub fn enumeration<C: Into<String>, const N: usize>(choices: [C; N]) -> ValueParser<String> {
     ValueParser::from_input(flag::enumeration("value", choices))
 }
 #[cfg(feature = "url")]

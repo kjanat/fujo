@@ -11,6 +11,7 @@ pub struct Builtins {
     pub help: bool,
     pub json: bool,
     pub quiet: bool,
+    pub explain: bool,
 }
 impl Default for Builtins {
     fn default() -> Self {
@@ -18,8 +19,76 @@ impl Default for Builtins {
             help: true,
             json: true,
             quiet: true,
+            explain: false,
         }
     }
+}
+impl Builtins {
+    pub fn global_flags(&self, version: bool, completions: bool, config: bool) -> Vec<GlobalFlag> {
+        [
+            self.help.then_some(GlobalFlag {
+                long: "--help",
+                short: Some("-h"),
+                value: None,
+                values: &[],
+                description: "Show help",
+            }),
+            version.then_some(GlobalFlag {
+                long: "--version",
+                short: Some("-V"),
+                value: None,
+                values: &[],
+                description: "Show version",
+            }),
+            self.json.then_some(GlobalFlag {
+                long: "--json",
+                short: None,
+                value: None,
+                values: &[],
+                description: "Write structured JSON",
+            }),
+            self.quiet.then_some(GlobalFlag {
+                long: "--quiet",
+                short: Some("-q"),
+                value: None,
+                values: &[],
+                description: "Suppress status and informational output",
+            }),
+            self.explain.then_some(GlobalFlag {
+                long: "--explain",
+                short: None,
+                value: None,
+                values: &[],
+                description: "List the stages of a command without running it",
+            }),
+            completions.then_some(GlobalFlag {
+                long: "--completions",
+                short: None,
+                value: Some("shell"),
+                values: &SHELLS,
+                description: "Generate shell completions",
+            }),
+            config.then_some(GlobalFlag {
+                long: "--config",
+                short: None,
+                value: Some("path"),
+                values: &[],
+                description: "Read configuration from this file",
+            }),
+        ]
+        .into_iter()
+        .flatten()
+        .collect()
+    }
+}
+pub const SHELLS: [&str; 4] = ["bash", "zsh", "fish", "powershell"];
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GlobalFlag {
+    pub long: &'static str,
+    pub short: Option<&'static str>,
+    pub value: Option<&'static str>,
+    pub values: &'static [&'static str],
+    pub description: &'static str,
 }
 #[derive(Debug, Clone, Serialize)]
 pub struct ProgramSchema {
@@ -30,6 +99,7 @@ pub struct ProgramSchema {
     pub default: Option<CommandSchema>,
     pub builtins: Builtins,
     pub completions: bool,
+    pub config: bool,
     pub flags: Vec<InputSchema>,
 }
 
@@ -58,6 +128,20 @@ impl CommandSchema {
                 "Command names must be non-empty and contain no whitespace",
             ));
         }
+        for (i, input) in self.flags.iter().chain(&self.args).enumerate() {
+            if self
+                .flags
+                .iter()
+                .chain(&self.args)
+                .take(i)
+                .any(|earlier| earlier.conflicts_with(input))
+            {
+                return Err(CliError::new(
+                    "INVALID_SCHEMA",
+                    format!("Input '{}' is declared with conflicting types", input.name),
+                ));
+            }
+        }
         let mut names = HashSet::new();
         for flag in &self.flags {
             flag.validate_definition()?;
@@ -67,18 +151,11 @@ impl CommandSchema {
                     "A positional input was registered as a flag",
                 ));
             }
-            for spelling in std::iter::once(flag.name.as_str())
-                .chain(flag.aliases.iter().map(|a| a.name.as_str()))
-                .chain(flag.negated_name.as_deref())
-            {
-                if spelling.is_empty()
-                    || spelling.chars().any(|c| c.is_whitespace() || c == '=')
-                    || spelling.starts_with('-')
-                    || !names.insert(spelling)
-                {
+            for spelling in flag.spellings() {
+                if !names.insert(spelling) {
                     return Err(CliError::new(
-                        "DUPLICATE_FLAG",
-                        format!("Invalid or colliding flag spelling '{spelling}'"),
+                        "INVALID_SCHEMA",
+                        format!("Colliding flag spelling '{spelling}'"),
                     ));
                 }
             }
@@ -133,14 +210,24 @@ impl CommandSchema {
                     ));
                 }
             }
-            let mut effective = command.clone();
-            for flag in self.flags.iter().filter(|f| f.propagate) {
-                if !effective.flags.iter().any(|f| f.name == flag.name) {
-                    effective.flags.insert(0, flag.clone());
-                }
-            }
-            effective.validate()?;
+            let propagated: Vec<_> = self.flags.iter().filter(|f| f.propagate).cloned().collect();
+            with_flags(command.clone(), &propagated).validate()?;
         }
         Ok(())
     }
+}
+pub fn with_flags(mut schema: CommandSchema, inherited: &[InputSchema]) -> CommandSchema {
+    let mut flags: Vec<_> = inherited
+        .iter()
+        .filter(|f| {
+            schema
+                .flags
+                .iter()
+                .all(|local| local.name != f.name || local.conflicts_with(f))
+        })
+        .cloned()
+        .collect();
+    flags.extend(schema.flags);
+    schema.flags = flags;
+    schema
 }
