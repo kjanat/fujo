@@ -182,6 +182,18 @@
 //!     .inherit(&shared);
 //! ```
 //!
+//! `share` registers flags only, including flags reached through `inherit`:
+//! ```compile_fail
+//! use fujo::{Command, arg};
+//! let shared = fujo::pipeline(arg::string("name")).derive(|_, name, ()| Ok(name.clone()));
+//! let command = Command::new("demo").share(&shared);
+//! ```
+//! ```compile_fail
+//! use fujo::{Cli, arg};
+//! let named = fujo::pipeline(arg::string("name")).derive(|_, name, ()| Ok(name.clone()));
+//! let app = Cli::new("demo").share(&fujo::pipeline(()).inherit(&named));
+//! ```
+//!
 //! A continuation runs at most once:
 //! ```compile_fail
 //! use fujo::Command;
@@ -210,6 +222,7 @@ use crate::schema::Surface;
 #[doc(hidden)]
 pub use inputs::__private;
 pub use inputs::FlagSet;
+pub use inputs::Inherits;
 pub use inputs::InputSet;
 use serde::Serialize;
 use std::any::type_name;
@@ -756,11 +769,25 @@ impl<C, I> Chain<C, I, (), AnyTail> {
 impl<I> Chain<(), I, (), AnyTail> {
     /// Run a shared pipeline after the stages declared so far. The pipeline's
     /// state, tail, and inputs become this pipeline's.
-    pub fn inherit<G, S: 'static, N>(mut self, pipeline: &Pipeline<G, S, N>) -> Pipeline<I, S, N> {
+    pub fn inherit<G, S: 'static, N>(
+        self,
+        pipeline: &Pipeline<G, S, N>,
+    ) -> Pipeline<Inherits<I, G>, S, N> {
         let mut declared = self.declared.to_vec();
         declare(&mut declared, &pipeline.declared);
-        self.declared = declared.into();
-        self.inherited(pipeline)
+        Chain {
+            carrier: (),
+            inputs: Arc::new(Inherits {
+                inputs: self.inputs,
+                inherited: PhantomData,
+            }),
+            declared: declared.into(),
+            state: Arc::new(Inherited {
+                previous: self.state,
+                pipeline: pipeline.state.clone(),
+            }),
+            tail: PhantomData,
+        }
     }
 }
 impl<I> Chain<Command, I, (), AnyTail> {

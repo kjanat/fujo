@@ -423,6 +423,13 @@ pub(crate) fn project(
         Ok(values.last().cloned().unwrap_or(Value::Null))
     }
 }
+pub fn spelling(name: &str) -> String {
+    if name.chars().count() == 1 {
+        format!("-{name}")
+    } else {
+        format!("--{name}")
+    }
+}
 fn unknown_flag(name: &str, flags: &[InputSchema], long: bool) -> CliError {
     let display = if long {
         format!("--{name}")
@@ -439,10 +446,11 @@ fn unknown_flag(name: &str, flags: &[InputSchema], long: bool) -> CliError {
                     .chain(
                         f.aliases
                             .iter()
-                            .filter(|a| !a.hidden && a.name.len() > 1)
+                            .filter(|a| !a.hidden)
                             .map(|a| a.name.as_str()),
                     )
                     .chain(f.negated_name.as_deref())
+                    .filter(|name| name.chars().count() > 1)
             })
             .collect();
         if let Some(suggest) = suggest_command(name, candidates.into_iter()) {

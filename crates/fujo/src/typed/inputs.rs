@@ -34,6 +34,24 @@ impl InputSet for () {
 }
 impl FlagSet for () {}
 
+/// The inputs of a pipeline `I` after it inherits a pipeline over `G`. Stages
+/// read the values of `I`; the set counts as flags only when `G` does too.
+pub struct Inherits<I, G> {
+    pub(crate) inputs: std::sync::Arc<I>,
+    pub(crate) inherited: std::marker::PhantomData<fn() -> G>,
+}
+impl<I: InputSet, G: InputSet> sealed::Sealed for Inherits<I, G> {}
+impl<I: InputSet, G: InputSet> InputSet for Inherits<I, G> {
+    type Values<'a> = I::Values<'a>;
+    fn visit(&self, visitor: &mut dyn FnMut(InputSchema)) {
+        self.inputs.visit(visitor);
+    }
+    fn read<'a>(&self, resolved: &'a Resolved) -> Result<Self::Values<'a>> {
+        self.inputs.read(resolved)
+    }
+}
+impl<I: FlagSet, G: FlagSet> FlagSet for Inherits<I, G> {}
+
 macro_rules! input {
     ($surface:ty) => {
         impl<T: 'static, P: Presence<T> + 'static> sealed::Sealed for Input<T, P, $surface> {}

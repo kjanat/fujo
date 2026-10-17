@@ -3,6 +3,7 @@ use fujo_core::Result;
 use fujo_core::command::CommandSchema;
 use fujo_core::command::GlobalFlag;
 use fujo_core::command::ProgramSchema;
+use fujo_core::command::SHELLS;
 use fujo_core::parse::ParseOptions;
 use fujo_core::schema::InputSchema;
 use std::fmt::Write;
@@ -56,29 +57,43 @@ impl Node {
             "--{}",
             fujo_core::parse::canonical_flag_name_with(lookup, flag)
         ))
-        .chain(flag.aliases.iter().filter(|a| !a.hidden).map(|a| {
-            format!(
-                "{}{}",
-                if a.name.chars().count() == 1 {
-                    "-"
-                } else {
-                    "--"
-                },
-                a.name
-            )
-        }))
-        .chain(flag.negated_name.as_ref().map(|n| format!("--{n}")))
+        .chain(
+            flag.aliases
+                .iter()
+                .filter(|a| !a.hidden)
+                .map(|a| fujo_core::parse::spelling(&a.name)),
+        )
+        .chain(flag.negated_name.as_deref().map(fujo_core::parse::spelling))
         .collect()
     }
-    fn value_forms(&self, options: ParseOptions) -> Vec<(&InputSchema, String)> {
+    fn value_forms(
+        &self,
+        globals: &[GlobalFlag],
+        options: ParseOptions,
+    ) -> Vec<(Vec<String>, String)> {
         let lookup = self.lookup(options);
-        self.value_flags()
+        let mut forms: Vec<_> = self
+            .value_flags()
             .flat_map(|flag| {
+                let values = enum_values(flag);
                 self.forms(&lookup, flag)
                     .into_iter()
-                    .map(move |form| (flag, form))
+                    .map(move |form| (values.to_vec(), form))
             })
-            .collect()
+            .collect();
+        forms.extend(
+            globals
+                .iter()
+                .filter(|global| global.value.is_some())
+                .flat_map(|global| {
+                    let values: Vec<String> =
+                        global.values.iter().map(|v| (*v).to_owned()).collect();
+                    std::iter::once(global.long)
+                        .chain(global.short)
+                        .map(move |form| (values.clone(), form.to_owned()))
+                }),
+        );
+        forms
     }
     fn keyed(&self, form: &str) -> String {
         format!("{}:{form}", self.path)
@@ -165,9 +180,7 @@ fn nodes(program: &ProgramSchema) -> Vec<Node> {
         nodes.push(Node {
             path: "completions".into(),
             flags: vec![],
-            children: ["bash", "zsh", "fish", "powershell"]
-                .map(|s| (s.into(), s.into()))
-                .to_vec(),
+            children: SHELLS.map(|s| (s.into(), s.into())).to_vec(),
         });
     }
     nodes
@@ -240,7 +253,7 @@ pub fn generate_with_options(
             };
             script.push_str("    token=\"${words[i]}\"\n    (( skip )) && { skip=0; continue; }\n    [[ $token == -- ]] && break\n    case \"$path:$token\" in\n");
             for node in &nodes {
-                for (_, form) in node.value_forms(options) {
+                for (_, form) in node.value_forms(&globals, options) {
                     let _ = writeln!(
                         script,
                         "      {}) skip=1; continue ;;",
@@ -262,9 +275,8 @@ pub fn generate_with_options(
             }
             script.push_str("  case \"$path:$value_flag\" in\n");
             for node in &nodes {
-                for (flag, form) in node.value_forms(options) {
+                for (values, form) in node.value_forms(&globals, options) {
                     let _ = writeln!(script, "    {})", quote(&node.keyed(&form)));
-                    let values = enum_values(flag);
                     if !values.is_empty() {
                         let _ = writeln!(
                             script,
@@ -318,7 +330,7 @@ pub fn generate_with_options(
                 "function {function}\n  set -l expected (string join ' ' -- $argv)\n  set -l tokens (commandline -opc)\n  set -e tokens[1]\n  set -l path ''\n  set -l skip 0\n  for token in $tokens\n    if test $skip -eq 1\n      set skip 0\n      continue\n    end\n    if test \"$token\" = --\n      break\n    end\n    switch \"$path:$token\"\n"
             );
             for node in &nodes {
-                for (_, form) in node.value_forms(options) {
+                for (_, form) in node.value_forms(&globals, options) {
                     let _ = writeln!(
                         script,
                         "      case {}\n        set skip 1\n        continue",
@@ -394,6 +406,11 @@ pub fn generate_with_options(
                 if global.value.is_some() {
                     script.push_str(" -r");
                 }
+                if !global.values.is_empty() {
+                    let values: Vec<String> =
+                        global.values.iter().map(|v| (*v).to_owned()).collect();
+                    let _ = write!(script, " -f -a {}", fish_words(&values));
+                }
                 script.push('\n');
             }
             script
@@ -404,7 +421,7 @@ pub fn generate_with_options(
                 ps_quote(&program.name)
             );
             for node in &nodes {
-                for (_, form) in node.value_forms(options) {
+                for (_, form) in node.value_forms(&globals, options) {
                     let _ = writeln!(
                         script,
                         "      {} {{ $skip = $true }}",
@@ -438,12 +455,12 @@ pub fn generate_with_options(
             }
             script.push_str("  }\n  $valueFlag = $previous; $valueCur = $wordToComplete; $prefix = ''\n  if ($wordToComplete.StartsWith('--') -and $wordToComplete.Contains('=')) { $index = $wordToComplete.IndexOf('='); $valueFlag = $wordToComplete.Substring(0, $index); $valueCur = $wordToComplete.Substring($index+1); $prefix = $valueFlag + '=' }\n  switch (\"${path}:$valueFlag\") {\n");
             for node in &nodes {
-                for (flag, form) in node.value_forms(options) {
+                for (values, form) in node.value_forms(&globals, options) {
                     let _ = writeln!(
                         script,
                         "    {} {{ $candidates = @({}) }}",
                         ps_quote(&node.keyed(&form)),
-                        enum_values(flag)
+                        values
                             .iter()
                             .map(|s| ps_quote(s))
                             .collect::<Vec<_>>()

@@ -179,7 +179,7 @@ impl Output {
         }
     }
     pub fn color(&self, code: u8, text: impl Display) -> String {
-        if self.options.color && self.options.tty && !self.options.json {
+        if self.options.color && !self.options.json {
             format!("\x1b[{code}m{text}\x1b[0m")
         } else {
             text.to_string()

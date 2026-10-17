@@ -8,6 +8,7 @@ use crate::schema::FlagMarker;
 use crate::schema::Input;
 use crate::schema::Presence;
 use crate::typed::ActionInfo;
+use crate::typed::FlagSet;
 use crate::typed::Pipeline;
 use crate::typed::StageInfo;
 use crate::typed::StageKind;
@@ -236,9 +237,18 @@ impl Command {
         self
     }
     /// Run a pipeline once before this command or any child and keep its state
-    /// for stages that call `shared`. The pipeline's inputs are registered here.
-    pub fn share<G, S: Send + 'static, M>(mut self, pipeline: &Pipeline<G, S, M>) -> Self {
+    /// for stages that call `shared`. The pipeline's flags propagate to children.
+    pub fn share<G: FlagSet, S: Send + 'static, M>(mut self, pipeline: &Pipeline<G, S, M>) -> Self {
         self.declare(pipeline.declared());
+        for flag in &mut self.schema.flags {
+            if pipeline
+                .declared()
+                .iter()
+                .any(|input| input.name == flag.name)
+            {
+                *flag = flag.clone().propagated();
+            }
+        }
         self.stages.extend(pipeline.stages());
         self.steps.push(pipeline.step());
         self

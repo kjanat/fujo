@@ -323,9 +323,10 @@ A pipeline can also run once at the root or on a group, before dispatch.
 `Cli::share(&pipeline)` or `Command::share(&pipeline)` runs it for every
 invocation; a command takes its state with `.shared(&pipeline)` as its first
 stage, or anywhere with `ctx.shared(&pipeline)?`. Each read clones the value,
-so it must be `Clone + Send`, and `share` registers the pipeline's inputs on the
-root or group. A shared pipeline wraps only itself; use `inherit` when its
-middleware should wrap the command.
+so it must be `Clone + Send`. `share` takes flag-only pipelines and registers
+their flags on the root or group, and a group's shared flags reach its children.
+A shared pipeline wraps only itself; use `inherit` when its middleware should
+wrap the command.
 
 ```rust
 use fujo::{Cli, Command, flag};

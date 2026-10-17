@@ -89,6 +89,7 @@ pub use typed::AsyncMiddleware;
 pub use typed::Chain;
 pub use typed::Derive;
 pub use typed::FlagSet;
+pub use typed::Inherits;
 pub use typed::InputSet;
 pub use typed::Middleware;
 pub use typed::Pipeline;

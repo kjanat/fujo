@@ -167,22 +167,12 @@ pub fn command_help(
                     .aliases
                     .iter()
                     .filter(|a| !a.hidden)
-                    .map(|a| {
-                        format!(
-                            "{}{}",
-                            if a.name.chars().count() == 1 {
-                                "-"
-                            } else {
-                                "--"
-                            },
-                            a.name
-                        )
-                    })
+                    .map(|a| crate::parse::spelling(&a.name))
                     .chain(std::iter::once(format!(
                         "--{}",
                         crate::parse::canonical_flag_name_with(&lookup, flag)
                     )))
-                    .chain(flag.negated_name.as_ref().map(|n| format!("--{n}")))
+                    .chain(flag.negated_name.as_deref().map(crate::parse::spelling))
                     .collect::<Vec<_>>()
                     .join(", ");
                 let hint = if flag.expects_value() {

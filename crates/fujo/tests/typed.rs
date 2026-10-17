@@ -1243,4 +1243,66 @@ fn inherited_and_shared_pipelines_register_their_inputs() {
         .execute(["--region=asia"], RunOptions::default());
     assert!(result.success(), "{:?}", result.error);
     assert_eq!(result.stdout, "4\n");
+    let result = Cli::new("demo")
+        .share(&nested)
+        .default(
+            Command::new("length")
+                .inputs(())
+                .shared(&nested)
+                .action(|ctx, (), length| {
+                    ctx.out.log(length);
+                    Ok(())
+                }),
+        )
+        .execute(["--region=us"], RunOptions::default());
+    assert!(result.success(), "{:?}", result.error);
+    assert_eq!(result.stdout, "2\n");
+}
+
+#[test]
+fn a_group_share_reaches_every_child_with_its_flags() {
+    let profile = fujo::pipeline(flag::string("profile").default("dev".into()))
+        .derive(|_, profile, ()| Ok(profile.to_uppercase()));
+    let seed = Command::new("seed")
+        .inputs(())
+        .shared(&profile)
+        .action(|ctx, (), profile| {
+            ctx.out.log(profile);
+            Ok(())
+        });
+    let app = Cli::new("demo").command(Command::new("db").share(&profile).command(seed));
+    let result = app.execute(["db", "seed"], RunOptions::default());
+    assert!(result.success(), "{:?}", result.error);
+    assert_eq!(result.stdout, "DEV\n");
+    let result = app.execute(["db", "seed", "--profile=prod"], RunOptions::default());
+    assert!(result.success(), "{:?}", result.error);
+    assert_eq!(result.stdout, "PROD\n");
+    let result = app.execute(["db", "--profile=qa", "seed"], RunOptions::default());
+    assert!(result.success(), "{:?}", result.error);
+    assert_eq!(result.stdout, "QA\n");
+}
+
+#[test]
+fn explain_on_an_actionless_group_lists_its_stages() {
+    let session = fujo::pipeline(()).map(|()| 1_u8);
+    let group = Command::new("group")
+        .share(&session)
+        .command(Command::new("leaf").action(|_| panic!("action must not execute")));
+    let app = Cli::new("demo")
+        .builtins(fujo::Builtins {
+            explain: true,
+            ..Default::default()
+        })
+        .command(group);
+    let result = app.execute(["group", "--explain"], RunOptions::default());
+    assert!(result.success(), "{:?}", result.error);
+    let lines: Vec<_> = result.stdout.lines().collect();
+    assert_eq!(lines[0], "Stages of group:");
+    assert_eq!(lines.len(), 3, "{}", result.stdout);
+    assert!(lines[1].starts_with("  derive     sync  "), "{}", lines[1]);
+    assert_eq!(lines[2], "  no action");
+    let help = app.execute(["group"], RunOptions::default());
+    assert!(help.stdout.contains("leaf"), "{}", help.stdout);
+    let help = app.execute(["group", "--explain", "--help"], RunOptions::default());
+    assert!(help.stdout.contains("leaf"), "{}", help.stdout);
 }

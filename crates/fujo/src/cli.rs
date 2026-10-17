@@ -538,7 +538,8 @@ impl Cli {
                 return Ok(None);
             };
             if help
-                || (invocation.command.action.is_none()
+                || (!explain
+                    && invocation.command.action.is_none()
                     && !invocation.command.children.is_empty()
                     && invocation.argv.is_empty())
             {

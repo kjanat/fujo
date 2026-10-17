@@ -30,42 +30,49 @@ impl Builtins {
                 long: "--help",
                 short: Some("-h"),
                 value: None,
+                values: &[],
                 description: "Show help",
             }),
             version.then_some(GlobalFlag {
                 long: "--version",
                 short: Some("-V"),
                 value: None,
+                values: &[],
                 description: "Show version",
             }),
             self.json.then_some(GlobalFlag {
                 long: "--json",
                 short: None,
                 value: None,
+                values: &[],
                 description: "Write structured JSON",
             }),
             self.quiet.then_some(GlobalFlag {
                 long: "--quiet",
                 short: Some("-q"),
                 value: None,
+                values: &[],
                 description: "Suppress status and informational output",
             }),
             self.explain.then_some(GlobalFlag {
                 long: "--explain",
                 short: None,
                 value: None,
+                values: &[],
                 description: "List the stages of a command without running it",
             }),
             completions.then_some(GlobalFlag {
                 long: "--completions",
                 short: None,
                 value: Some("shell"),
+                values: &SHELLS,
                 description: "Generate shell completions",
             }),
             config.then_some(GlobalFlag {
                 long: "--config",
                 short: None,
                 value: Some("path"),
+                values: &[],
                 description: "Read configuration from this file",
             }),
         ]
@@ -74,11 +81,13 @@ impl Builtins {
         .collect()
     }
 }
+pub const SHELLS: [&str; 4] = ["bash", "zsh", "fish", "powershell"];
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GlobalFlag {
     pub long: &'static str,
     pub short: Option<&'static str>,
     pub value: Option<&'static str>,
+    pub values: &'static [&'static str],
     pub description: &'static str,
 }
 #[derive(Debug, Clone, Serialize)]

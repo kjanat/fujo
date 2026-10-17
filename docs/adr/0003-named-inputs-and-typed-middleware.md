@@ -108,9 +108,11 @@ with the same state type stay apart. The value crosses the type-erased command
 boundary, so it must be `Clone + Send`; every read clones it, and `retry`
 reruns `shared` safely. A missing value, or a pipeline whose middleware
 dropped its continuation, is the runtime error `SHARED_STATE_MISSING`. `share`
-registers the pipeline's inputs on the root or group. A shared pipeline's
-middleware wraps the pipeline only; `inherit` is the form whose middleware wraps
-the command.
+takes flag-only pipelines and registers their flags on the root or group, and a
+group marks them to propagate to its children. A pipeline that inherits another
+pipeline has the inputs `Inherits<I, G>`. Its stages read `I`, and the set is
+flag-only when both `I` and `G` are. A shared pipeline's middleware wraps the
+pipeline only; `inherit` is the form whose middleware wraps the command.
 
 Every builder records a `StageInfo` per stage: kind, handler type name or
 `named` label, and whether it is asynchronous. `Command::stages()` lists

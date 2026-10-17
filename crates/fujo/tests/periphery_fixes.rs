@@ -202,7 +202,7 @@ mod completion {
         );
         assert!(fish.contains("complete -c 'demo' -l 'json'\n"), "{fish}");
         assert!(
-            fish.contains("complete -c 'demo' -l 'completions' -r\n"),
+            fish.contains("complete -c 'demo' -l 'completions' -r -f -a "),
             "{fish}"
         );
         let powershell = generate(app().schema(), Shell::PowerShell);
@@ -232,6 +232,78 @@ mod completion {
             powershell.contains("    'db seed:--region' { $candidates = @('us', 'eu') }\n"),
             "{powershell}"
         );
+    }
+
+    #[test]
+    fn value_taking_globals_skip_their_operand_and_complete_their_value() {
+        let program = app().config(fujo::config::ConfigSettings::new("demo"));
+        let bash = generate(program.schema(), Shell::Bash);
+        assert!(
+            bash.contains("      'db seed:--config') skip=1; continue ;;\n"),
+            "{bash}"
+        );
+        assert!(
+            bash.contains(
+                "    ':--completions')\n      candidates=('bash' 'zsh' 'fish' 'powershell')\n"
+            ),
+            "{bash}"
+        );
+        assert!(
+            bash.contains("    'db:--config')\n      mapfile -t COMPREPLY"),
+            "{bash}"
+        );
+        let zsh = generate(program.schema(), Shell::Zsh);
+        assert!(
+            zsh.contains("    'db:--config')\n      _files; return ;;\n"),
+            "{zsh}"
+        );
+        let fish = generate(program.schema(), Shell::Fish);
+        assert!(
+            fish.contains("      case 'db:--config'\n        set skip 1\n        continue\n"),
+            "{fish}"
+        );
+        assert!(
+            fish.contains(
+                "complete -c 'demo' -l 'completions' -r -f -a '\\'bash\\' \\'zsh\\' \\'fish\\' \\'powershell\\''\n"
+            ),
+            "{fish}"
+        );
+        assert!(
+            fish.contains("complete -c 'demo' -l 'config' -r\n"),
+            "{fish}"
+        );
+        let powershell = generate(program.schema(), Shell::PowerShell);
+        assert!(
+            powershell.contains("      'db:--config' { $skip = $true }\n"),
+            "{powershell}"
+        );
+        assert!(
+            powershell.contains(
+                "    ':--completions' { $candidates = @('bash', 'zsh', 'fish', 'powershell') }\n"
+            ),
+            "{powershell}"
+        );
+    }
+
+    #[test]
+    fn one_character_negated_names_render_as_short_flags() {
+        let program = cli("demo")
+            .command(command("paint").flag(flag::boolean("color").alias("c").negated_name("N")));
+        let help = program
+            .execute(["paint", "--help"], RunOptions::default())
+            .stdout;
+        assert!(help.contains("  -c, --color, -N"), "{help}");
+        let bash = generate(program.schema(), Shell::Bash);
+        assert!(bash.contains(" '-N'"), "{bash}");
+        assert!(!bash.contains("'--N'"), "{bash}");
+        let fish = generate(program.schema(), Shell::Fish);
+        assert!(fish.contains(" -s 'N' "), "{fish}");
+        let error = program
+            .execute(["paint", "--M"], RunOptions::default())
+            .error
+            .unwrap();
+        assert_eq!(error.code, "UNKNOWN_FLAG");
+        assert_eq!(error.suggest, None);
     }
 
     #[test]

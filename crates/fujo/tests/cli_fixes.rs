@@ -67,20 +67,21 @@ impl Runtime for Host {
 
 #[test]
 fn activity_follows_the_stderr_terminal_and_color_follows_stdout() {
-    let app = cli("demo").default(command("run").action(|_| Ok(())));
+    let app = cli("demo").default(command("run").action(|ctx| {
+        ctx.out.log(ctx.out.color(31, "red"));
+        Ok(())
+    }));
     let host = Host::new(true, false);
-    assert!(
-        app.run_with(Vec::<String>::new(), RunOptions::default(), &host)
-            .success()
-    );
+    let result = app.run_with(Vec::<String>::new(), RunOptions::default(), &host);
+    assert!(result.success(), "{:?}", result.error);
+    assert_eq!(result.stdout, "\x1b[31mred\x1b[0m\n");
     let options = host.options();
     assert!(!options.tty);
     assert!(options.color);
     let host = Host::new(false, true);
-    assert!(
-        app.run_with(Vec::<String>::new(), RunOptions::default(), &host)
-            .success()
-    );
+    let result = app.run_with(Vec::<String>::new(), RunOptions::default(), &host);
+    assert!(result.success(), "{:?}", result.error);
+    assert_eq!(result.stdout, "red\n");
     let options = host.options();
     assert!(options.tty);
     assert!(!options.color);
