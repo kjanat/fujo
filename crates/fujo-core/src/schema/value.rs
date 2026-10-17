@@ -16,7 +16,7 @@
 //! ```
 //! ```compile_fail
 //! use fujo_core::schema::{flag, value};
-//! let tags = flag::array("tags", value::string()).separator("");
+//! let tags = flag::array("tags", value::string()).separator(fujo_core::delimiter!(""));
 //! ```
 //! ```compile_fail
 //! use fujo_core::schema::flag;

@@ -262,8 +262,8 @@ mod sealed {
 pub trait Collection: sealed::Collection {}
 impl<T: sealed::Collection> Collection for T {}
 impl<T: Collection, P, S> Input<T, P, S> {
-    pub fn separator(mut self, separator: char) -> Self {
-        self.schema.declaration.cli_split = Split::Delimiter(separator);
+    pub fn separator(mut self, separator: impl Into<Delimiter>) -> Self {
+        self.schema.declaration.cli_split = Split::Delimiter(separator.into());
         self
     }
     pub fn split_cli(mut self, split: Split) -> Self {

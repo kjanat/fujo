@@ -430,6 +430,12 @@ Collections splice stdin values into the order of CLI occurrences. Splitting is
 configured separately for CLI, environment, and stdin; JSON object splitting is
 available for key/value collections.
 
+`.separator(',')` accepts a single character. For longer delimiters, use
+`.separator(fujo::delimiter!("::"))`. The macro rejects empty strings at compile
+time. For a runtime string, use `schema::Delimiter::try_from(text)?`.
+`Split::Delimiter(fujo::delimiter!(", "))` also works with `.split_cli()`,
+`.split_env()`, and `.split_stdin()`.
+
 ## Commands and application state
 
 Register commands with `Cli::command()`, nest them with `group(...).command(...)`,
@@ -548,9 +554,11 @@ The generators also support PowerShell. Calling the flag without a shell detects
 Values complete by type. Choices list their values, path flags and path
 arguments complete file names, and free-text values complete nothing. Words
 after `--` complete as arguments only. The Zsh script works when sourced and
-when installed as `_mycli` in `fpath`. PowerShell lists files after an empty
-free-text value, because it falls back to files whenever a completer returns
-nothing.
+when installed as `_mycli` in `fpath`. PowerShell completes paths explicitly,
+including `--config=PATH`. On versions that reject empty completion results
+(including 7.6), nonempty text and unmatched choices are returned unchanged;
+an empty free-text value can still fall back to files. The generated script
+detects support for empty results and suppresses that fallback when supported.
 
 ## Configuration and testing
 

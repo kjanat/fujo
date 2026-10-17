@@ -2342,6 +2342,168 @@
 				"code": "REQUIRED_ARG",
 				"exitCode": 2
 			}
+		},
+		{
+			"schema": "separated",
+			"argv": [
+				"--tag",
+				"a::b",
+				"--tag",
+				"c"
+			],
+			"options": {},
+			"expected": {
+				"flags": {
+					"tag": [
+						"a",
+						"b",
+						"c"
+					]
+				},
+				"args": {
+					"value": []
+				},
+				"sources": {
+					"flags": {
+						"tag": {
+							"stage": "cli"
+						}
+					},
+					"args": {
+						"value": {
+							"stage": "default"
+						}
+					}
+				}
+			}
+		},
+		{
+			"schema": "separated",
+			"argv": [
+				"--tag",
+				"::a::::b::"
+			],
+			"options": {},
+			"expected": {
+				"flags": {
+					"tag": [
+						"a",
+						"b"
+					]
+				},
+				"args": {
+					"value": []
+				},
+				"sources": {
+					"flags": {
+						"tag": {
+							"stage": "cli"
+						}
+					},
+					"args": {
+						"value": {
+							"stage": "default"
+						}
+					}
+				}
+			}
+		},
+		{
+			"schema": "separated",
+			"argv": [],
+			"options": {
+				"env": {
+					"TAGS": "a::b"
+				}
+			},
+			"expected": {
+				"flags": {
+					"tag": [
+						"a",
+						"b"
+					]
+				},
+				"args": {
+					"value": []
+				},
+				"sources": {
+					"flags": {
+						"tag": {
+							"stage": "env",
+							"envVar": "TAGS"
+						}
+					},
+					"args": {
+						"value": {
+							"stage": "default"
+						}
+					}
+				}
+			}
+		},
+		{
+			"schema": "separated",
+			"argv": [],
+			"options": {
+				"stdinData": "a::b"
+			},
+			"expected": {
+				"flags": {
+					"tag": [
+						"a",
+						"b"
+					]
+				},
+				"args": {
+					"value": []
+				},
+				"sources": {
+					"flags": {
+						"tag": {
+							"stage": "stdin",
+							"via": "stdin",
+							"trigger": "fallback"
+						}
+					},
+					"args": {
+						"value": {
+							"stage": "default"
+						}
+					}
+				}
+			}
+		},
+		{
+			"schema": "separated",
+			"argv": [
+				"a, b",
+				"c"
+			],
+			"options": {},
+			"expected": {
+				"flags": {
+					"tag": []
+				},
+				"args": {
+					"value": [
+						"a",
+						"b",
+						"c"
+					]
+				},
+				"sources": {
+					"flags": {
+						"tag": {
+							"stage": "default"
+						}
+					},
+					"args": {
+						"value": {
+							"stage": "cli"
+						}
+					}
+				}
+			}
 		}
 	]
 }

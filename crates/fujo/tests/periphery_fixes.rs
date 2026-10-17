@@ -222,21 +222,6 @@ mod completion {
     }
 
     #[test]
-    fn powershell_returns_the_typed_word_after_free_text_flags() {
-        let powershell = generate(app().schema(), Shell::PowerShell);
-        assert!(
-            powershell.contains(
-                "      'db seed:--label' { if ($valueCur) { [System.Management.Automation.CompletionResult]::new($prefix + $valueCur, $valueCur, 'ParameterValue', $valueCur) }; return }\n"
-            ),
-            "{powershell}"
-        );
-        assert!(
-            powershell.contains("      'db seed:--region' { @('us', 'eu') | Where-Object"),
-            "{powershell}"
-        );
-    }
-
-    #[test]
     fn value_taking_globals_skip_their_operand_and_complete_their_value() {
         let program = app().config(fujo::config::ConfigSettings::new("demo"));
         let bash = generate(program.schema(), Shell::Bash);
@@ -285,12 +270,13 @@ mod completion {
         );
         assert!(
             powershell.contains(
-                "      ':--completions' { @('bash', 'zsh', 'fish', 'powershell') | Where-Object"
+                "      ':--completions' { $matches = @(@('bash', 'zsh', 'fish', 'powershell') | Where-Object"
             ),
             "{powershell}"
         );
         assert!(
-            powershell.contains("      ':--config' { return }\n"),
+            powershell
+                .contains("      ':--config' { & $completeFiles $valueCur $prefix; return }\n"),
             "{powershell}"
         );
     }

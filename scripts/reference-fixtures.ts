@@ -37,7 +37,22 @@ const bounds = command('bounds').flag('port', flag.number({ int: true, min: 1, m
 );
 const rest = command('rest').arg('value', arg.number().variadic());
 const entriesrest = command('entriesrest').arg('value', arg.keyValue().variadic());
-const definitions = { basic, required, stdin, list, trim, arraysjson, entriesjson, bounds, rest, entriesrest };
+const separated = command('separated')
+	.flag('tag', flag.array(flag.string()).separator('::').env('TAGS').stdin().split({ env: '::', stdin: '::' }))
+	.arg('value', arg.string().variadic().default([]).separator(', '));
+const definitions = {
+	basic,
+	required,
+	stdin,
+	list,
+	trim,
+	arraysjson,
+	entriesjson,
+	bounds,
+	rest,
+	entriesrest,
+	separated,
+};
 const cases = [
 	['basic', []],
 	['basic', ['--name', 'cli'], { env: { NAME: 'env' }, config: { app: { name: 'config' } } }],
@@ -128,6 +143,11 @@ const cases = [
 	['entriesrest', ['x=one', 'y=two']],
 	['entriesrest', ['x=one', 'x=two']],
 	['entriesrest', []],
+	['separated', ['--tag', 'a::b', '--tag', 'c']],
+	['separated', ['--tag', '::a::::b::']],
+	['separated', [], { env: { TAGS: 'a::b' } }],
+	['separated', [], { stdinData: 'a::b' }],
+	['separated', ['a, b', 'c']],
 ] as const;
 const fixtures = [];
 for (const [schema, argv, options = {}] of cases) {

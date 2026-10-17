@@ -457,7 +457,7 @@ fn fish(
     }
     let _ = write!(
         script,
-        "      case '*'\n        if not string match -q -- '-?*' $token\n          set pos (math $pos + 1)\n        end\n    end\n  end\n  printf '%s\\n' $pos $literal $path\nend\nfunction {function}_in\n  set -l state ({function}_state)\n  set -l expected (string join ' ' -- $argv)\n  test \"$state[3]\" = \"$expected\"\nend\nfunction {function}\n  set -l state ({function}_state)\n  set -l expected (string join ' ' -- $argv)\n  test \"$state[2]\" = 0; and test \"$state[3]\" = \"$expected\"\nend\nfunction {function}_arg --argument-names index rest\n  set -l state ({function}_state)\n  set -l path $argv\n  set -e path[1..2]\n  set -l expected (string join ' ' -- $path)\n  test \"$state[3]\" = \"$expected\"; or return 1\n  if test \"$rest\" = 1\n    test $state[1] -ge $index\n  else\n    test $state[1] -eq $index\n  end\nend\n"
+        "      case '*'\n        if not string match -qr -- '^-.+' $token\n          set pos (math $pos + 1)\n        end\n    end\n  end\n  printf '%s\\n' $pos $literal $path\nend\nfunction {function}_in\n  set -l state ({function}_state)\n  set -l expected (string join ' ' -- $argv)\n  test \"$state[3]\" = \"$expected\"\nend\nfunction {function}\n  set -l state ({function}_state)\n  set -l expected (string join ' ' -- $argv)\n  test \"$state[2]\" = 0; and test \"$state[3]\" = \"$expected\"\nend\nfunction {function}_arg --argument-names index rest\n  set -l state ({function}_state)\n  set -l path $argv\n  set -e path[1..2]\n  set -l expected (string join ' ' -- $path)\n  test \"$state[3]\" = \"$expected\"; or return 1\n  if test \"$rest\" = 1\n    test $state[1] -ge $index\n  else\n    test $state[1] -eq $index\n  end\nend\n"
     );
     let program_name = quote(&program.name);
     for node in nodes {
@@ -546,8 +546,38 @@ fn powershell(
     globals: &[GlobalFlag],
     options: ParseOptions,
 ) -> String {
+    // Completion options let us probe empty-result support without registering a command.
     let mut script = format!(
-        "Register-ArgumentCompleter -Native -CommandName {} -ScriptBlock {{\n  param($wordToComplete, $commandAst, $cursorPosition)\n  $path = ''; $previous = ''; $skip = $false; $pos = 0; $literal = $false\n  $tokens = @($commandAst.CommandElements | Select-Object -Skip 1 | Where-Object {{ $_.Extent.EndOffset -lt $cursorPosition }} | ForEach-Object {{ $_.Extent.Text }})\n  foreach ($token in $tokens) {{\n    if ($skip) {{ $skip = $false; $previous = $token; continue }}\n    if ($literal) {{ $pos++; $previous = $token; continue }}\n    if ($token -eq '--') {{ $literal = $true; $previous = $token; continue }}\n    switch -CaseSensitive (\"${{path}}:$token\") {{\n",
+        r#"& {{
+  $probe = 'fujo-empty-result-probe '
+  $options = @{{ NativeArgumentCompleters = @{{ 'fujo-empty-result-probe' = {{ '' }} }} }}
+  try {{
+    $emptyResultsSupported = [System.Management.Automation.CommandCompletion]::CompleteInput($probe, $probe.Length, $options).CompletionMatches.Count -eq 0
+  }} catch {{
+    $emptyResultsSupported = $false
+    $Error.RemoveAt(0)
+  }}
+  Register-ArgumentCompleter -Native -CommandName {} -ScriptBlock ({{
+  param($wordToComplete, $commandAst, $cursorPosition)
+  $noResults = {{
+    param($text)
+    if ($emptyResultsSupported) {{ '' }} elseif ($text) {{ [System.Management.Automation.CompletionResult]::new($text, $text, 'ParameterValue', $text) }}
+  }}
+  $completeFiles = {{
+    param($text, $prefix = '')
+    $matches = @([System.Management.Automation.CompletionCompleters]::CompleteFilename($text))
+    if ($matches.Count) {{
+      foreach ($match in $matches) {{ [System.Management.Automation.CompletionResult]::new($prefix + $match.CompletionText, $match.ListItemText, $match.ResultType, $match.ToolTip) }}
+    }} else {{ & $noResults ($prefix + $text) }}
+  }}
+  $path = ''; $previous = ''; $skip = $false; $pos = 0; $literal = $false
+  $tokens = @($commandAst.CommandElements | Select-Object -Skip 1 | Where-Object {{ $_.Extent.EndOffset -lt $cursorPosition }} | ForEach-Object {{ $_.Extent.Text }})
+  foreach ($token in $tokens) {{
+    if ($skip) {{ $skip = $false; $previous = $token; continue }}
+    if ($literal) {{ $pos++; $previous = $token; continue }}
+    if ($token -eq '--') {{ $literal = $true; $previous = $token; continue }}
+    switch -CaseSensitive ("${{path}}:$token") {{
+"#,
         ps_quote(&program.name)
     );
     for node in nodes {
@@ -572,11 +602,11 @@ fn powershell(
         for (values, form) in node.value_forms(globals, options) {
             let action = match values {
                 Values::Choices(choices) => format!(
-                    "@({}) | Where-Object {{ $_.StartsWith($valueCur, [StringComparison]::OrdinalIgnoreCase) }} | ForEach-Object {{ [System.Management.Automation.CompletionResult]::new($prefix + $_, $_, 'ParameterValue', $_) }}; return",
+                    "$matches = @(@({}) | Where-Object {{ $_.StartsWith($valueCur, [StringComparison]::OrdinalIgnoreCase) }}); if ($matches.Count) {{ $matches | ForEach-Object {{ [System.Management.Automation.CompletionResult]::new($prefix + $_, $_, 'ParameterValue', $_) }} }} else {{ & $noResults $wordToComplete }}; return",
                     ps_words(&choices)
                 ),
-                Values::Files => "return".to_owned(),
-                Values::Text => "if ($valueCur) { [System.Management.Automation.CompletionResult]::new($prefix + $valueCur, $valueCur, 'ParameterValue', $valueCur) }; return".to_owned(),
+                Values::Files => "& $completeFiles $valueCur $prefix; return".to_owned(),
+                Values::Text => "& $noResults $wordToComplete; return".to_owned(),
             };
             let _ = writeln!(
                 script,
@@ -602,7 +632,7 @@ fn powershell(
             );
         }
     }
-    script.push_str("  }\n  if ($files) { return }\n  $candidates = @()\n  if (-not $literal) {\n    switch -CaseSensitive ($path) {\n");
+    script.push_str("  }\n  if ($files) { & $completeFiles $wordToComplete; return }\n  $candidates = @()\n  if (-not $literal) {\n    switch -CaseSensitive ($path) {\n");
     for node in nodes {
         let _ = writeln!(
             script,
@@ -611,6 +641,6 @@ fn powershell(
             ps_words(&node.candidates(globals, options))
         );
     }
-    script.push_str("    }\n  }\n  $candidates += $extra\n  $candidates | Where-Object { $_.StartsWith($wordToComplete, [StringComparison]::OrdinalIgnoreCase) } | ForEach-Object { [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_) }\n}\n");
+    script.push_str("    }\n  }\n  $candidates += $extra\n  $matches = @($candidates | Where-Object { $_.StartsWith($wordToComplete, [StringComparison]::OrdinalIgnoreCase) })\n  if ($matches.Count) {\n    $matches | ForEach-Object { [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_) }\n  } else { & $noResults $wordToComplete }\n  }.GetNewClosure())\n}\n");
     script
 }

@@ -46,7 +46,7 @@ the async build binary. Explicit paths also support `CARGO_TARGET_DIR`.
 
 ## Reference fixtures
 
-The checked-in `reference.json` records 89 parse/resolution cases generated from
+The checked-in `reference.json` records 94 parse/resolution cases generated from
 the sibling TypeScript checkout at the commit stored in the fixture. Tests compare
 values, provenance, error codes, and exit codes. Date formatting and JSON numeric
 representations are normalized while preserving their values.

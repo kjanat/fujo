@@ -30,13 +30,19 @@ fn app() -> fujo::Cli {
 }
 #[cfg(feature = "shell-tests")]
 fn files_app() -> fujo::Cli {
-    cli("demo").command(
-        command("pack")
-            .flag(flag::path("out"))
-            .flag(flag::string("label"))
-            .arg(fujo::arg::path("input"))
-            .arg(fujo::arg::enumeration("mode", ["fast", "slow"])),
-    )
+    cli("demo")
+        .config(fujo::config::ConfigSettings::new("demo"))
+        .command(
+            command("pack")
+                .flag(flag::path("out"))
+                .flag(flag::string("label"))
+                .flag(flag::boolean("publish"))
+                .flag(flag::parse::<bool>("cache").negatable())
+                .flag(flag::enumeration("speed", ["fast", "slow"]))
+                .arg(fujo::arg::path("input"))
+                .arg(fujo::arg::enumeration("mode", ["fast", "slow"]))
+                .arg(fujo::arg::string("text")),
+        )
 }
 #[cfg(feature = "shell-tests")]
 fn workspace() -> tempfile::TempDir {
@@ -74,16 +80,21 @@ fn run_in(dir: &std::path::Path, shell: &str, args: &[&str], script: &str) -> St
 }
 #[cfg(feature = "shell-tests")]
 fn run_powershell(script: &str) -> String {
+    run_powershell_in(std::path::Path::new("."), script)
+}
+#[cfg(feature = "shell-tests")]
+fn run_powershell_in(dir: &std::path::Path, script: &str) -> String {
     // `-Command -` enters PowerShell's stdin reader, which can emit terminal
     // control sequences even with redirected streams and `-NonInteractive`.
-    run(
+    run_in(
+        dir,
         "pwsh",
         &[
             "-NoLogo",
             "-NoProfile",
             "-NonInteractive",
             "-Command",
-            script,
+            &format!("$ErrorActionPreference = 'Stop'\n{script}"),
         ],
         "",
     )
@@ -273,30 +284,142 @@ fn fish_completes_files_only_for_path_values_and_positionals() {
     );
     assert_eq!(sections[4], "demo pack -- in\ninput.txt\n", "{output}");
 }
+
 #[test]
 #[cfg(feature = "shell-tests")]
-fn powershell_falls_back_to_files_only_for_path_values() {
+fn fish_counts_positionals_after_boolean_and_inline_flags() {
+    let dir = workspace();
+    let script = generate(files_app().schema(), Shell::Fish);
+    for line in [
+        "demo pack --publish in",
+        "demo pack --no-cache in",
+        "demo pack --cache=true in",
+        "demo pack --label=value in",
+    ] {
+        let output = run_in(
+            dir.path(),
+            "fish",
+            &["--no-config"],
+            &format!("{script}\ncomplete -C '{line}'\n"),
+        );
+        assert_eq!(output, "input.txt\n", "{line}: {output}");
+    }
+    for line in [
+        "demo pack --no-cache input.txt f",
+        "demo pack -- --label f",
+        "demo pack - f",
+    ] {
+        let output = run_in(
+            dir.path(),
+            "fish",
+            &["--no-config"],
+            &format!("{script}\ncomplete -C '{line}'\n"),
+        );
+        assert_eq!(output, "fast\n", "{line}: {output}");
+    }
+}
+
+#[test]
+#[cfg(feature = "shell-tests")]
+fn powershell_completes_inline_paths_and_preserves_quoted_filenames() {
+    let dir = workspace();
+    std::fs::write(dir.path().join("space name.txt"), "").unwrap();
+    let script = generate(files_app().schema(), Shell::PowerShell);
+    for (line, expected) in [
+        ("demo pack --config=in", "--config=./input.txt"),
+        ("demo pack --out=in", "--out=./input.txt"),
+        ("demo pack --out=spa", "--out='./space name.txt'"),
+        ("demo pack --out spa", "'./space name.txt'"),
+    ] {
+        let output = run_powershell_in(
+            dir.path(),
+            &format!(
+                "{script}\n$t='{line}'; [System.Management.Automation.CommandCompletion]::CompleteInput($t,$t.Length,$null).CompletionMatches | ForEach-Object CompletionText\n"
+            ),
+        );
+        // PowerShell uses the host platform's directory separator.
+        assert_eq!(
+            output.trim().replace('\\', "/"),
+            expected,
+            "{line}: {output}"
+        );
+    }
+}
+
+#[test]
+#[cfg(feature = "shell-tests")]
+fn powershell_does_not_offer_files_for_text_or_unmatched_choices() {
+    let dir = workspace();
+    let script = generate(files_app().schema(), Shell::PowerShell);
+    for line in [
+        "demo pack --label in",
+        "demo pack --label=in",
+        "demo pack --speed in",
+        "demo pack --speed=in",
+        "demo pack input.txt in",
+        "demo pack input.txt fast in",
+        "demo pack -- input.txt fast in",
+    ] {
+        let output = run_powershell_in(
+            dir.path(),
+            &format!(
+                "{script}\n$t='{line}'; [System.Management.Automation.CommandCompletion]::CompleteInput($t,$t.Length,$null).CompletionMatches | ForEach-Object CompletionText\n"
+            ),
+        );
+        let word = line.rsplit(' ').next().unwrap();
+        assert!(
+            output.trim().is_empty() || output.trim() == word,
+            "{line}: {output}"
+        );
+    }
+}
+
+#[test]
+#[cfg(feature = "shell-tests")]
+fn powershell_suppresses_empty_results_when_the_runtime_supports_them() {
+    let dir = workspace();
+    let script = generate(files_app().schema(), Shell::PowerShell);
+    let output = run_powershell_in(
+        dir.path(),
+        &format!(
+            r#"
+$probe = 'empty-result-test '
+$options = @{{ NativeArgumentCompleters = @{{ 'empty-result-test' = {{ '' }} }} }}
+try {{
+    $supported = [System.Management.Automation.CommandCompletion]::CompleteInput($probe,$probe.Length,$options).CompletionMatches.Count -eq 0
+}} catch {{ $supported = $false }}
+$before = $Error.Count
+{script}
+if ($Error.Count -ne $before) {{ throw 'Loading completions left an error in the session' }}
+$t = 'demo pack --label '
+$matches = @([System.Management.Automation.CommandCompletion]::CompleteInput($t,$t.Length,$null).CompletionMatches | ForEach-Object CompletionText)
+@{{ supported = $supported; matches = $matches }} | ConvertTo-Json -Compress
+"#
+        ),
+    );
+    let result: serde_json::Value = serde_json::from_str(output.trim()).unwrap();
+    if result["supported"] == true {
+        assert_eq!(result["matches"], serde_json::json!([]));
+    } else {
+        assert_eq!(
+            result["matches"][0].as_str().unwrap().replace('\\', "/"),
+            "./input.txt"
+        );
+    }
+}
+
+#[test]
+#[cfg(feature = "shell-tests")]
+fn powershell_completes_files_only_for_path_values() {
     let dir = workspace();
     let script = generate(files_app().schema(), Shell::PowerShell);
     let probe = format!(
         "{script}\nforeach ($t in 'demo pack --label ab', 'demo pack --out in', 'demo pack input.txt ') {{ '== ' + $t; [System.Management.Automation.CommandCompletion]::CompleteInput($t,$t.Length,$null).CompletionMatches | ForEach-Object {{ $_.CompletionText }} }}\n"
     );
-    let output = run_in(
-        dir.path(),
-        "pwsh",
-        &[
-            "-NoLogo",
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            &probe,
-        ],
-        "",
-    );
+    let output = run_powershell_in(dir.path(), &probe);
     let sections: Vec<&str> = output.split("== ").skip(1).collect();
-    assert_eq!(
-        sections[0].trim_end(),
-        "demo pack --label ab\nab",
+    assert!(
+        ["demo pack --label ab", "demo pack --label ab\nab"].contains(&sections[0].trim_end()),
         "{output}"
     );
     assert_eq!(
