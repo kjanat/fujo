@@ -219,8 +219,7 @@ use crate::execution::async_middleware_required;
 use crate::execution::async_required;
 use crate::schema::InputSchema;
 use crate::schema::Surface;
-#[doc(hidden)]
-pub use inputs::__private;
+pub use inputs::Bundle;
 pub use inputs::FlagSet;
 pub use inputs::Inherits;
 pub use inputs::InputSet;

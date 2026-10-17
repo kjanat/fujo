@@ -86,6 +86,7 @@ pub mod typed;
 pub use typed::ActionInfo;
 pub use typed::AsyncDerive;
 pub use typed::AsyncMiddleware;
+pub use typed::Bundle;
 pub use typed::Chain;
 pub use typed::Derive;
 pub use typed::FlagSet;

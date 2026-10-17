@@ -56,7 +56,7 @@ fn render(prompt: &Prompt) -> String {
 }
 impl PromptEngine for TerminalPrompter {
     fn prompt(&self, prompt: &Prompt) -> Result<Option<Value>> {
-        self.output.raw_stderr(&render(prompt));
+        self.output.try_raw_stderr(&render(prompt))?;
         let answer = if prompt.secret {
             secret_answer(rpassword::read_password())?
         } else {
@@ -104,8 +104,9 @@ impl PromptEngine for TerminalPrompter {
         }
     }
     fn retry(&self, error: &CliError) -> bool {
-        self.output.raw_stderr(&format!("{}\n", error.message));
-        true
+        self.output
+            .try_raw_stderr(&format!("{}\n", error.message))
+            .is_ok()
     }
 }
 
@@ -130,6 +131,26 @@ mod tests {
                 .code,
             "IO_ERROR"
         );
+    }
+
+    #[test]
+    fn a_failed_prompt_write_stops_before_reading() {
+        struct Closed;
+        impl io::Write for Closed {
+            fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+                Err(io::Error::other("stderr closed"))
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        let output = Output::with_writers(io::sink(), Closed, Default::default());
+        let prompter = TerminalPrompter::new(output);
+        assert_eq!(
+            prompter.prompt(&Prompt::input("Name?")).unwrap_err().code,
+            "IO_ERROR"
+        );
+        assert!(!prompter.retry(&CliError::validation("BAD", "Answer yes or no")));
     }
 
     #[test]

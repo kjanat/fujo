@@ -7,7 +7,19 @@ use crate::schema::InputSchema;
 use crate::schema::Presence;
 
 pub(crate) mod sealed {
+    use super::InputSchema;
+    use super::InputSet;
+    use super::Resolved;
+    use super::Result;
+
     pub trait Sealed {}
+
+    pub trait Shape: InputSet {
+        type Refs<'s>;
+        fn visit_refs(refs: &Self::Refs<'_>, visitor: &mut dyn FnMut(InputSchema));
+        fn read_refs<'a>(refs: &Self::Refs<'_>, resolved: &'a Resolved)
+        -> Result<Self::Values<'a>>;
+    }
 }
 
 /// Registered inputs and the native references delivered to a typed callback.
@@ -52,6 +64,33 @@ impl<I: InputSet, G: InputSet> InputSet for Inherits<I, G> {
 }
 impl<I: FlagSet, G: FlagSet> FlagSet for Inherits<I, G> {}
 
+/// A named input struct declared with [`inputs!`](crate::inputs) or
+/// [`flags!`](crate::flags). The struct exposes its fields as a tuple of
+/// handles, and every value it delivers is read through those handles.
+pub trait Bundle: Send + Sync + 'static {
+    #[doc(hidden)]
+    type Shape: sealed::Shape;
+    type Values<'a>;
+    #[doc(hidden)]
+    fn fields(&self) -> <Self::Shape as sealed::Shape>::Refs<'_>;
+    #[doc(hidden)]
+    fn values<'a>(fields: <Self::Shape as InputSet>::Values<'a>) -> Self::Values<'a>;
+}
+impl<B: Bundle> sealed::Sealed for B {}
+impl<B: Bundle> InputSet for B {
+    type Values<'a> = B::Values<'a>;
+    fn visit(&self, visitor: &mut dyn FnMut(InputSchema)) {
+        <B::Shape as sealed::Shape>::visit_refs(&self.fields(), visitor);
+    }
+    fn read<'a>(&self, resolved: &'a Resolved) -> Result<Self::Values<'a>> {
+        Ok(B::values(<B::Shape as sealed::Shape>::read_refs(
+            &self.fields(),
+            resolved,
+        )?))
+    }
+}
+impl<B: Bundle> FlagSet for B where B::Shape: FlagSet {}
+
 macro_rules! input {
     ($surface:ty) => {
         impl<T: 'static, P: Presence<T> + 'static> sealed::Sealed for Input<T, P, $surface> {}
@@ -81,6 +120,16 @@ macro_rules! tuple {
             }
         }
         impl<$($ty: FlagSet),+> FlagSet for ($($ty,)+) {}
+        impl<$($ty: InputSet),+> sealed::Shape for ($($ty,)+) {
+            type Refs<'s> = ($(&'s $ty,)+);
+            fn visit_refs(refs: &Self::Refs<'_>, visitor: &mut dyn FnMut(InputSchema)) {
+                $(refs.$index.visit(visitor);)+
+            }
+            fn read_refs<'a>(refs: &Self::Refs<'_>, resolved: &'a Resolved)
+            -> Result<Self::Values<'a>> {
+                Ok(($(refs.$index.read(resolved)?,)+))
+            }
+        }
     };
 }
 tuple!(A:0);
@@ -95,11 +144,6 @@ tuple!(A:0,B:1,C:2,D:3,E:4,F:5,G:6,H:7,I:8);
 tuple!(A:0,B:1,C:2,D:3,E:4,F:5,G:6,H:7,I:8,J:9);
 tuple!(A:0,B:1,C:2,D:3,E:4,F:5,G:6,H:7,I:8,J:9,K:10);
 tuple!(A:0,B:1,C:2,D:3,E:4,F:5,G:6,H:7,I:8,J:9,K:10,L:11);
-
-#[doc(hidden)]
-pub mod __private {
-    pub use super::sealed::Sealed;
-}
 
 /// Declare a named input bundle. The first struct holds input handles and is
 /// `Clone`; the second receives their resolved references in typed callbacks.
@@ -137,6 +181,18 @@ pub mod __private {
 /// fujo::inputs! { struct Demo => DemoValues { name: Arg<String> } }
 /// let demo = Demo { name: flag::string("name") };
 /// ```
+///
+/// Only declared bundles and the built-in sets implement `InputSet`:
+/// ```compile_fail
+/// struct Sneaky;
+/// impl fujo::InputSet for Sneaky {
+///     type Values<'a> = ();
+///     fn visit(&self, _: &mut dyn FnMut(fujo::schema::InputSchema)) {}
+///     fn read<'a>(&self, _: &'a fujo::Resolved) -> fujo::Result<()> {
+///         Ok(())
+///     }
+/// }
+/// ```
 #[macro_export]
 macro_rules! inputs {
     (
@@ -157,16 +213,16 @@ macro_rules! inputs {
         $vis struct $values<'a> {
             $($field_vis $field: <$ty as $crate::InputSet>::Values<'a>,)+
         }
-        impl $crate::typed::__private::Sealed for $name {}
-        impl $crate::InputSet for $name {
+        impl $crate::Bundle for $name {
+            type Shape = ($($ty,)+);
             type Values<'a> = $values<'a>;
-            fn visit(&self, visitor: &mut dyn FnMut($crate::schema::InputSchema)) {
-                $($crate::InputSet::visit(&self.$field, visitor);)+
+            fn fields(&self) -> ($(&$ty,)+) {
+                ($(&self.$field,)+)
             }
-            fn read<'a>(&self, resolved: &'a $crate::Resolved) -> $crate::Result<Self::Values<'a>> {
-                Ok($values {
-                    $($field: $crate::InputSet::read(&self.$field, resolved)?,)+
-                })
+            fn values<'a>(
+                ($($field,)+): ($(<$ty as $crate::InputSet>::Values<'a>,)+),
+            ) -> $values<'a> {
+                $values { $($field,)+ }
             }
         }
     };
@@ -210,6 +266,9 @@ macro_rules! flags {
                 $($(#[$field_meta])* $field_vis $field: $ty,)+
             }
         }
-        impl $crate::typed::FlagSet for $name where $($ty: $crate::typed::FlagSet),+ {}
+        const _: fn() = || {
+            fn flags<T: $crate::typed::FlagSet>() {}
+            flags::<($($ty,)+)>();
+        };
     };
 }

@@ -168,6 +168,9 @@ impl Output {
     pub fn raw_stderr(&self, text: &str) {
         self.write(text, true);
     }
+    pub fn try_raw_stderr(&self, text: &str) -> Result<()> {
+        self.state().write(text, true).map_or(Ok(()), Err)
+    }
     pub fn render_error(&self, error: &CliError) {
         if self.options.json {
             let _ = self.json(error);
@@ -284,20 +287,21 @@ impl Output {
     }
 }
 impl State {
-    fn write(&mut self, text: &str, stderr: bool) {
+    fn write(&mut self, text: &str, stderr: bool) -> Option<CliError> {
         if text.is_empty() {
-            return;
+            return None;
         }
         #[cfg(feature = "terminal-activity")]
         self.clear_activity();
-        self.emit(text, stderr, true);
+        let failed = self.emit(text, stderr, true);
         #[cfg(feature = "terminal-activity")]
         {
             self.activities.line_start = text.ends_with('\n');
             self.render_activity();
         }
+        failed
     }
-    fn emit(&mut self, text: &str, stderr: bool, retain: bool) {
+    fn emit(&mut self, text: &str, stderr: bool, retain: bool) -> Option<CliError> {
         if retain {
             if stderr {
                 self.capture.stderr.push_str(text);
@@ -310,13 +314,14 @@ impl State {
         } else {
             &mut self.stdout
         };
-        if let Some(writer) = writer
-            && let Err(error) = writer
-                .write_all(text.as_bytes())
-                .and_then(|_| writer.flush())
-        {
-            self.error.get_or_insert_with(|| error.into());
-        }
+        let writer = writer.as_mut()?;
+        let error: CliError = writer
+            .write_all(text.as_bytes())
+            .and_then(|_| writer.flush())
+            .err()?
+            .into();
+        self.error.get_or_insert_with(|| error.clone());
+        Some(error)
     }
 }
 #[derive(Debug, Clone)]
@@ -533,6 +538,12 @@ mod tests {
         let out = Output::with_writers(Broken, std::io::sink(), Default::default());
         out.log("data");
         assert_eq!(out.finish().unwrap_err().code, "IO_ERROR");
+        let out = Output::with_writers(std::io::sink(), Broken, Default::default());
+        assert_eq!(out.try_raw_stderr("prompt").unwrap_err().code, "IO_ERROR");
+        assert_eq!(out.finish().unwrap_err().code, "IO_ERROR");
+        let out = Output::capture(Default::default());
+        assert!(out.try_raw_stderr("prompt").is_ok());
+        assert_eq!(out.captured().stderr, "prompt");
     }
     #[test]
     fn a_poisoned_lock_keeps_the_output_usable() {
