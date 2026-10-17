@@ -106,6 +106,6 @@ fn the_config_flag_appears_in_help_and_completions_only_when_configured() {
         use fujo::completion::generate;
         assert!(!generate(plain.schema(), Shell::Bash).contains("--config"));
         assert!(generate(configured.schema(), Shell::Bash).contains("'--config'"));
-        assert!(generate(configured.schema(), Shell::Fish).contains("-l 'config' -r\n"));
+        assert!(generate(configured.schema(), Shell::Fish).contains("-l 'config' -r -F\n"));
     }
 }

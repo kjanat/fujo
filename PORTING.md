@@ -22,7 +22,7 @@ crate responsibilities and uses Rust types and host interfaces.
 - In-process execution with injectable environment, stdin, prompt answers,
   filesystem capabilities, and output destinations.
 
-The differential suite verifies 89 representative parse/resolution cases and
+The differential suite verifies 94 representative parse/resolution cases and
 11 lifecycle cases, generated from the recorded TS revision. CI runs the TS
 generators live with `--check` before testing Rust. Native integration tests
 additionally cover plugin failures, suspension, cancellation, and host behavior. This is a

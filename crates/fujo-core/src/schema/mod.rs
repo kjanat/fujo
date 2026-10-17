@@ -8,6 +8,7 @@ use regex::Regex;
 use serde::Serialize;
 use serde_json::Value;
 use serde_json::json;
+use std::borrow::Cow;
 use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -74,11 +75,81 @@ impl StdinBinding {
     }
 }
 
+/// A non-empty string used to split collection values.
+///
+/// Use [`crate::delimiter!`] for compile-time checked literals, `char::into`
+/// for single characters, and `TryFrom` for strings supplied at runtime.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(transparent)]
+pub struct Delimiter(Cow<'static, str>);
+
+impl Delimiter {
+    /// Creates a delimiter from a static string.
+    ///
+    /// # Panics
+    /// Panics if the string is empty. [`crate::delimiter!`] checks this in a
+    /// const context, making an empty literal a compilation error.
+    pub const fn from_static(value: &'static str) -> Self {
+        assert!(!value.is_empty(), "A delimiter cannot be empty");
+        Self(Cow::Borrowed(value))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<char> for Delimiter {
+    fn from(value: char) -> Self {
+        Self(Cow::Owned(value.to_string()))
+    }
+}
+
+impl TryFrom<String> for Delimiter {
+    type Error = CliError;
+
+    fn try_from(value: String) -> Result<Self> {
+        if value.is_empty() {
+            return Err(CliError::new(
+                "INVALID_SCHEMA",
+                "Split delimiter cannot be empty",
+            ));
+        }
+        Ok(Self(Cow::Owned(value)))
+    }
+}
+
+impl TryFrom<&str> for Delimiter {
+    type Error = CliError;
+
+    fn try_from(value: &str) -> Result<Self> {
+        Self::try_from(value.to_owned())
+    }
+}
+
+/// Creates a non-empty delimiter, checked at compile time.
+///
+/// ```
+/// use fujo_core::{delimiter, schema::Split};
+/// let split = Split::Delimiter(delimiter!("::"));
+/// assert_eq!(split.values("a::b").unwrap(), ["a", "b"]);
+/// ```
+///
+/// ```compile_fail
+/// let delimiter = fujo_core::delimiter!("");
+/// ```
+#[macro_export]
+macro_rules! delimiter {
+    ($value:expr) => {
+        const { $crate::schema::Delimiter::from_static($value) }
+    };
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "format", content = "delimiter", rename_all = "lowercase")]
 pub enum Split {
     Whole,
-    Delimiter(char),
+    Delimiter(Delimiter),
     Lines,
     Whitespace,
     Json,
@@ -88,7 +159,7 @@ impl Split {
         Ok(match self {
             Self::Whole => vec![json!(text)],
             Self::Delimiter(separator) => text
-                .split(*separator)
+                .split(separator.as_str())
                 .filter(|s| !s.is_empty())
                 .map(|s| json!(s))
                 .collect(),
@@ -331,7 +402,7 @@ impl InputSchema {
                 prompt: None,
                 enum_values: vec![],
                 cli_split: Split::Whole,
-                env_split: Split::Delimiter(','),
+                env_split: Split::Delimiter(crate::delimiter!(",")),
                 stdin_split: Split::Lines,
                 unique: false,
                 variadic: false,

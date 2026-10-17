@@ -11,9 +11,9 @@ default features; standalone output defaults to its terminal backend. Internal
 core/output dependencies disable defaults and forward features explicitly.
 Features only add capabilities, as required by Cargo feature unification.
 
-Gate specialized factories and constraints together with their dependencies.
-Keep metadata kinds available to completion and schema consumers. Unsupported
-specialized declarations fail validation, so every declared constraint is enforced.
+Gate specialized factories, constraints, and the `Url` and `Date` kinds
+together with their dependencies. A build without a feature cannot declare its
+inputs, so every declared constraint is enforced.
 Use small decimal scanners for duration/size values and a separate ISO shape
 check for Chrono, so neither integration needs the regex feature.
 

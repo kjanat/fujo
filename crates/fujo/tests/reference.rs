@@ -96,6 +96,21 @@ fn schema(name: &str) -> fujo::Command {
             ),
         "rest" => command("rest").arg(arg::number("value").variadic()),
         "entriesrest" => command("entriesrest").arg(arg::key_value("value").variadic_entries()),
+        "separated" => command("separated")
+            .flag(
+                flag::array("tag", value::string())
+                    .separator(fujo::delimiter!("::"))
+                    .env("TAGS")
+                    .stdin()
+                    .split_env(fujo::schema::Split::Delimiter(fujo::delimiter!("::")))
+                    .split_stdin(fujo::schema::Split::Delimiter(fujo::delimiter!("::"))),
+            )
+            .arg(
+                arg::string("value")
+                    .variadic()
+                    .default(Vec::new())
+                    .separator(fujo::delimiter!(", ")),
+            ),
         _ => panic!("Unknown reference schema"),
     }
 }

@@ -480,7 +480,7 @@ fn byte_sizes_trim_whitespace_around_the_unit() {
 #[test]
 fn delimiters_split_on_one_character_and_drop_empty_parts() {
     assert_eq!(
-        Split::Delimiter(';').values(";a;;b;").unwrap(),
+        Split::Delimiter(';'.into()).values(";a;;b;").unwrap(),
         [json!("a"), json!("b")]
     );
     let tags = flag::array("tags", value::string()).separator(';');
@@ -491,4 +491,61 @@ fn delimiters_split_on_one_character_and_drop_empty_parts() {
     );
     assert!(result.success(), "{:?}", result.error);
     assert_eq!(result.resolved.unwrap().get(&tags).unwrap(), ["x", "y"]);
+}
+
+#[test]
+fn non_empty_delimiters_preserve_strings_and_reject_empty_input() {
+    use fujo::schema::Delimiter;
+
+    for text in ["::", ", ", "🦀"] {
+        let delimiter = Delimiter::try_from(text.to_owned()).unwrap();
+        assert_eq!(delimiter.as_str(), text);
+        let split = Split::Delimiter(delimiter);
+        let input = format!("{text}a{text}{text}b{text}");
+        assert_eq!(split.values(&input).unwrap(), [json!("a"), json!("b")]);
+        assert_eq!(
+            serde_json::to_value(split).unwrap(),
+            json!({"format":"delimiter", "delimiter":text})
+        );
+    }
+    assert_eq!(Delimiter::try_from("").unwrap_err().code, "INVALID_SCHEMA");
+    assert_eq!(
+        Delimiter::try_from(String::new()).unwrap_err().code,
+        "INVALID_SCHEMA"
+    );
+    assert_eq!(Delimiter::from('🦀').as_str(), "🦀");
+}
+
+#[test]
+fn multi_character_delimiters_resolve_cli_environment_stdin_and_arguments() {
+    let tags = flag::array("tags", value::string())
+        .separator(fujo::delimiter!("::"))
+        .env("TAGS")
+        .split_env(Split::Delimiter(fujo::delimiter!("::")))
+        .stdin()
+        .split_stdin(Split::Delimiter(fujo::delimiter!("::")));
+    let mut stdin = RunOptions::default();
+    stdin.resolve.stdin = Some("a::b".into());
+    for (argv, options) in [
+        (vec!["--tags=::a::::b::"], RunOptions::default()),
+        (vec![], with_env("TAGS", "a::b")),
+        (vec![], stdin),
+    ] {
+        let result = run(command("app").flag(tags.clone()), &argv, options);
+        assert!(result.success(), "{:?}", result.error);
+        assert_eq!(result.resolved.unwrap().get(&tags).unwrap(), ["a", "b"]);
+    }
+    let names = arg::string("names")
+        .variadic()
+        .separator(fujo::delimiter!(", "));
+    let result = run(
+        command("app").arg(names.clone()),
+        &["a, b", "c"],
+        RunOptions::default(),
+    );
+    assert!(result.success(), "{:?}", result.error);
+    assert_eq!(
+        result.resolved.unwrap().get(&names).unwrap(),
+        ["a", "b", "c"]
+    );
 }

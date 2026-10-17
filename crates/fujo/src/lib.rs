@@ -72,6 +72,7 @@ mod execution;
 #[cfg(feature = "completion")]
 pub use fujo_complete as completion;
 pub mod config;
+pub use fujo_core::delimiter;
 pub use fujo_core::error;
 pub mod help;
 pub use fujo_core::json_schema;
