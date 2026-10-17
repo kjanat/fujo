@@ -5,6 +5,8 @@ authors.workspace      = true
 edition.workspace      = true
 rust-version.workspace = true
 description            = "Typed schemas, argument parsing, and input resolution for Fujo"
+readme.workspace       = true
+repository.workspace   = true
 license.workspace      = true
 
 [package.metadata.docs.rs]

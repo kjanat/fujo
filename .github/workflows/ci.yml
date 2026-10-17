@@ -2,6 +2,7 @@ name: CI
 on:
   push: { branches: [master] }
   pull_request:
+  workflow_call:
 permissions:
   contents: read
 concurrency:
@@ -80,3 +81,13 @@ jobs:
       - uses: $/.github/actions/setup
       - run: cargo test --workspace --no-default-features --locked
       - run: python scripts/check-features.py
+  package:
+    name: Crates.io package verification
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: $/.github/actions/setup
+      - uses: $/.github/actions/check-release
+      - run: cargo package --workspace --locked --all-features --registry crates-io

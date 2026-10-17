@@ -1,0 +1,21 @@
+name: Validate crate release
+description: Check shared crate versions and internal dependencies against an optional tag
+inputs:
+  workspace:
+    description: Absolute path to the Cargo workspace
+    default: ${{ github.workspace }}
+  tag:
+    description: Release tag including the v prefix
+    default: ""
+runs:
+  using: composite
+  steps:
+    - name: Test release validation
+      shell: bash
+      run: python3 -m unittest discover -s "${GITHUB_ACTION_PATH}" -p 'test_release.py'
+    - name: Validate workspace versions
+      shell: bash
+      working-directory: ${{ inputs.workspace }}
+      env:
+        RELEASE_TAG: ${{ inputs.tag }}
+      run: python3 "${GITHUB_ACTION_PATH}/check-release.py"
