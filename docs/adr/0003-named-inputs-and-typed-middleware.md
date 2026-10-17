@@ -98,7 +98,9 @@ composes a pipeline's stages after the command's own stages declared so far,
 so a pipeline middleware wraps the command's later stages and action. It is
 available while the command's state is `()` and its tail is `AnyTail`; the
 pipeline's state and tail carry over, and the pipeline's inputs are registered
-on the command, skipping names it already declares.
+on the command. A name the command already declares with the same type is
+registered once. A name declared with another type is the schema error
+`INVALID_SCHEMA`.
 
 `Cli::share` and `Command::share` run a pipeline once before dispatch as a
 dynamic step and keep its state in `Context` behind a private slot. A command

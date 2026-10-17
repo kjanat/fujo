@@ -132,8 +132,8 @@ impl Cli {
         self.default = Some(command);
         self
     }
-    pub fn flag<T, P>(mut self, flag: Input<T, P>) -> Self {
-        self.schema.flags.push(flag.into_schema());
+    pub fn flag<T: 'static, P: 'static>(mut self, flag: Input<T, P>) -> Self {
+        self.schema.flags.push(flag.typed_schema());
         self
     }
     /// Register reusable CLI-wide flags. Include the same bundle in a command's

@@ -187,6 +187,8 @@ pub struct InputSchema {
     #[serde(flatten)]
     pub(crate) declaration: InputDeclaration,
     #[serde(skip)]
+    pub(crate) native_type: Option<std::any::TypeId>,
+    #[serde(skip)]
     pub(crate) native_decoder: Option<NativeDecoder>,
     #[serde(skip)]
     pub(crate) native_default: Option<NativeValue>,
@@ -293,6 +295,10 @@ impl InputSchema {
         self.declaration.propagate = true;
         self
     }
+    pub fn conflicts_with(&self, other: &InputSchema) -> bool {
+        self.name == other.name
+            && (self.surface != other.surface || self.native_type != other.native_type)
+    }
     pub fn has_default(&self) -> bool {
         self.native_default.is_some()
     }
@@ -340,6 +346,7 @@ impl InputSchema {
                 default_description: None,
                 json_schema: None,
             },
+            native_type: None,
             native_decoder: None,
             native_default: None,
             native_validators: vec![],

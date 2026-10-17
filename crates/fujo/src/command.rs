@@ -194,12 +194,12 @@ impl Command {
         self.schema.hidden = true;
         self
     }
-    pub fn flag<T, P>(mut self, flag: Input<T, P, FlagMarker>) -> Self {
-        self.schema.flags.push(flag.into_schema());
+    pub fn flag<T: 'static, P: 'static>(mut self, flag: Input<T, P, FlagMarker>) -> Self {
+        self.schema.flags.push(flag.typed_schema());
         self
     }
-    pub fn arg<T, P>(mut self, arg: Input<T, P, ArgMarker>) -> Self {
-        self.schema.args.push(arg.into_schema());
+    pub fn arg<T: 'static, P: 'static>(mut self, arg: Input<T, P, ArgMarker>) -> Self {
+        self.schema.args.push(arg.typed_schema());
         self
     }
     pub fn command(mut self, command: Command) -> Self {
@@ -218,6 +218,7 @@ impl Command {
         mut self,
         action: impl Fn(&mut Context) -> Result<()> + Send + Sync + 'static,
     ) -> Self {
+        self.typed.clear();
         self.action_info = Some(ActionInfo {
             handler: type_name_of_val(&action),
             asynchronous: false,
@@ -229,6 +230,7 @@ impl Command {
         mut self,
         action: impl for<'a> AsyncFn(&'a mut Context) -> Result<()> + Send + Sync + 'static,
     ) -> Self {
+        self.typed.clear();
         self.action_info = Some(ActionInfo {
             handler: type_name_of_val(&action),
             asynchronous: true,

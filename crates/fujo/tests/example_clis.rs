@@ -571,6 +571,36 @@ async fn manifest_build_records_fingerprints_and_verify_reports_drift() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn manifest_inside_the_tree_is_left_out_of_its_own_fingerprints() {
+    let dir = tempfile::tempdir().unwrap();
+    tree(dir.path(), &[("a.txt", "a")]);
+    let root = dir.path().to_str().unwrap();
+    let out = dir.path().join("manifest.json");
+    let out = out.to_str().unwrap();
+    let verify = async || {
+        document(
+            &manifest::app()
+                .execute_async(["verify", root, "--manifest", out, "--json"], checked())
+                .await,
+        )
+    };
+    let clean = json!({"changed": [], "missing": [], "added": [], "unchanged": 1});
+    let built = manifest::app()
+        .execute_async(["build", root, "--out", out, "--json"], checked())
+        .await;
+    assert_eq!(document(&built)["files"], 1);
+    assert_eq!(verify().await, clean);
+    let rebuilt = manifest::app()
+        .execute_async(
+            ["build", root, "--out", out, "--force", "--json"],
+            checked(),
+        )
+        .await;
+    assert_eq!(document(&rebuilt)["files"], 1);
+    assert_eq!(verify().await, clean);
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn manifest_resolves_globals_from_cli_env_and_config_and_guards_overwrites() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("tree");

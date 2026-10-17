@@ -58,7 +58,7 @@ macro_rules! input {
         impl<T: 'static, P: Presence<T> + 'static> InputSet for Input<T, P, $surface> {
             type Values<'a> = P::Ref<'a>;
             fn visit(&self, visitor: &mut dyn FnMut(InputSchema)) {
-                visitor(self.schema().clone());
+                visitor(self.typed_schema());
             }
             fn read<'a>(&self, resolved: &'a Resolved) -> Result<Self::Values<'a>> {
                 resolved.get_ref(self)

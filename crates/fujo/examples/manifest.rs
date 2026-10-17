@@ -124,9 +124,11 @@ pub fn app() -> Cli {
             Ok(())
         })
         .inherit(&scanner)
-        .derive_async(async |ctx, BuildValues { root, .. }, (workers, files)| {
-            fingerprint_all(ctx, root, files, workers).await
-        })
+        .derive_async(
+            async |ctx, BuildValues { root, out, .. }, (workers, files)| {
+                fingerprint_all(ctx, root, without(files, out), workers).await
+            },
+        )
         .action(|ctx, BuildValues { out, .. }, manifest| {
             std::fs::write(out, serde_json::to_vec_pretty(manifest)?)?;
             let bytes: u64 = manifest.files.values().map(|entry| entry.size).sum();
@@ -165,7 +167,7 @@ pub fn app() -> Cli {
         .derive_async(
             async |ctx, VerifyValues { root, manifest, .. }, (workers, files)| {
                 let recorded: Manifest = serde_json::from_slice(&std::fs::read(manifest)?)?;
-                let current = fingerprint_all(ctx, root, files, workers).await?;
+                let current = fingerprint_all(ctx, root, without(files, manifest), workers).await?;
                 Ok(recorded.compare(current))
             },
         )
@@ -235,6 +237,16 @@ fn scan(ctx: Scope<'_>, root: &Path, ignore: &[String]) -> fujo::Result<Vec<Path
     files.sort();
     spinner.succeed(format!("Found {} files", files.len()));
     Ok(files)
+}
+
+fn without(files: Vec<PathBuf>, excluded: &Path) -> Vec<PathBuf> {
+    let Ok(excluded) = excluded.canonicalize() else {
+        return files;
+    };
+    files
+        .into_iter()
+        .filter(|file| file.canonicalize().map_or(true, |file| file != excluded))
+        .collect()
 }
 
 type Scanned = (Arc<Semaphore>, Vec<PathBuf>);

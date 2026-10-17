@@ -128,6 +128,20 @@ impl CommandSchema {
                 "Command names must be non-empty and contain no whitespace",
             ));
         }
+        for (i, input) in self.flags.iter().chain(&self.args).enumerate() {
+            if self
+                .flags
+                .iter()
+                .chain(&self.args)
+                .take(i)
+                .any(|earlier| earlier.conflicts_with(input))
+            {
+                return Err(CliError::new(
+                    "INVALID_SCHEMA",
+                    format!("Input '{}' is declared with conflicting types", input.name),
+                ));
+            }
+        }
         let mut names = HashSet::new();
         for flag in &self.flags {
             flag.validate_definition()?;

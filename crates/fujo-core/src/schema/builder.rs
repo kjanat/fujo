@@ -86,6 +86,13 @@ impl<T, P, S> Clone for Input<T, P, S> {
         }
     }
 }
+impl<T: 'static, P: 'static, S: 'static> Input<T, P, S> {
+    pub fn typed_schema(&self) -> InputSchema {
+        let mut schema = self.schema.clone();
+        schema.native_type = Some(std::any::TypeId::of::<InputType<T, P, S>>());
+        schema
+    }
+}
 impl<T, P, S> Input<T, P, S> {
     pub(super) fn from_schema(schema: InputSchema) -> Self {
         Self {

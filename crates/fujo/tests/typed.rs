@@ -1306,3 +1306,75 @@ fn explain_on_an_actionless_group_lists_its_stages() {
     let help = app.execute(["group", "--explain", "--help"], RunOptions::default());
     assert!(help.stdout.contains("leaf"), "{}", help.stdout);
 }
+
+#[test]
+fn conflicting_declarations_of_one_name_are_schema_errors() {
+    let text = fujo::pipeline(flag::string("port")).derive(|_, port, ()| Ok(port.cloned()));
+    let command = Command::new("serve")
+        .inputs(flag::parse::<u16>("port"))
+        .inherit(&text)
+        .action(|_, _, _| panic!("action must not execute"));
+    let error = Cli::new("demo")
+        .default(command)
+        .execute(["--port=80"], RunOptions::default())
+        .error
+        .unwrap();
+    assert_eq!(error.code, "INVALID_SCHEMA");
+    assert_eq!(
+        error.message,
+        "Input 'port' is declared with conflicting types"
+    );
+    let number = fujo::pipeline(flag::parse::<u16>("port")).derive(|_, port, ()| Ok(port.copied()));
+    let command = Command::new("serve")
+        .inputs(flag::parse::<u16>("port"))
+        .inherit(&number)
+        .action(|ctx, _, port| {
+            ctx.out.log(format!("{port:?}"));
+            Ok(())
+        });
+    let result = Cli::new("demo")
+        .default(command)
+        .execute(["--port=80"], RunOptions::default());
+    assert!(result.success(), "{:?}", result.error);
+    assert_eq!(result.stdout, "Some(80)\n");
+    let profile = fujo::pipeline(flag::string("profile").default("dev".into()))
+        .derive(|_, profile, ()| Ok(profile.clone()));
+    let group = Command::new("db")
+        .flag(flag::string("profile"))
+        .share(&profile)
+        .command(Command::new("seed").action(|_| Ok(())));
+    let error = Cli::new("demo")
+        .command(group)
+        .execute(["db", "seed"], RunOptions::default())
+        .error
+        .unwrap();
+    assert_eq!(error.code, "INVALID_SCHEMA");
+}
+
+#[test]
+fn replacing_an_action_drops_the_stages_of_the_replaced_pipeline() {
+    let typed = || {
+        Command::new("run")
+            .inputs(())
+            .map(|()| 1_u8)
+            .named("one")
+            .action(|_, (), _| Ok(()))
+    };
+    let handlers =
+        |command: &Command| -> Vec<_> { command.stages().iter().map(|s| s.handler).collect() };
+    assert_eq!(handlers(&typed()), ["one"]);
+    assert!(typed().action(|_| Ok(())).stages().is_empty());
+    assert!(typed().action_async(async |_| Ok(())).stages().is_empty());
+    let retyped = typed()
+        .inputs(())
+        .map(|()| 2_u8)
+        .named("two")
+        .action(|_, (), _| Ok(()));
+    assert_eq!(handlers(&retyped), ["two"]);
+    let retyped = typed()
+        .inputs(())
+        .map(|()| 3_u8)
+        .named("three")
+        .action_async(async |_, (), _| Ok(()));
+    assert_eq!(handlers(&retyped), ["three"]);
+}

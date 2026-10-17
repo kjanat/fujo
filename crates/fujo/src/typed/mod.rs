@@ -295,7 +295,10 @@ fn store_shared<S: Send + 'static>(ctx: &mut Context, id: usize, value: S) {
 }
 pub(crate) fn declare(bucket: &mut Vec<InputSchema>, inputs: &[InputSchema]) {
     for input in inputs {
-        if bucket.iter().all(|existing| existing.name != input.name) {
+        if bucket
+            .iter()
+            .all(|existing| existing.name != input.name || existing.conflicts_with(input))
+        {
             bucket.push(input.clone());
         }
     }
@@ -807,6 +810,7 @@ impl<I: InputSet, S: 'static, M> Chain<Command, I, S, M> {
     where
         F: for<'a> Fn(Scope<'a>, I::Values<'a>, &'a S) -> Result<()> + Send + Sync + 'static,
     {
+        self.carrier.typed.clear();
         self.state.describe(&mut self.carrier.typed);
         self.carrier.action_info = Some(ActionInfo {
             handler: type_name::<F>(),
@@ -830,6 +834,7 @@ impl<I: InputSet, S: 'static> Chain<Command, I, S, AnyTail> {
     where
         F: for<'a> AsyncFn(Scope<'a>, I::Values<'a>, &'a S) -> Result<()> + Send + Sync + 'static,
     {
+        self.carrier.typed.clear();
         self.state.describe(&mut self.carrier.typed);
         self.carrier.action_info = Some(ActionInfo {
             handler: type_name::<F>(),
