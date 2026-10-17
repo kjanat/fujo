@@ -229,7 +229,7 @@ fn globals(text: &mut String, program: &ProgramSchema, width: usize) {
             }
             label.push_str(flag.long);
             if let Some(value) = flag.value {
-                let _ = write!(label, " <{value}>");
+                let _ = write!(label, " <{}>", value.hint());
             }
             (label, flag.description.into())
         })

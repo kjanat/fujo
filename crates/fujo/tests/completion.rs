@@ -29,8 +29,29 @@ fn app() -> fujo::Cli {
         .completions()
 }
 #[cfg(feature = "shell-tests")]
+fn files_app() -> fujo::Cli {
+    cli("demo").command(
+        command("pack")
+            .flag(flag::path("out"))
+            .flag(flag::string("label"))
+            .arg(fujo::arg::path("input"))
+            .arg(fujo::arg::enumeration("mode", ["fast", "slow"])),
+    )
+}
+#[cfg(feature = "shell-tests")]
+fn workspace() -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("input.txt"), "").unwrap();
+    dir
+}
+#[cfg(feature = "shell-tests")]
 fn run(shell: &str, args: &[&str], script: &str) -> String {
+    run_in(std::path::Path::new("."), shell, args, script)
+}
+#[cfg(feature = "shell-tests")]
+fn run_in(dir: &std::path::Path, shell: &str, args: &[&str], script: &str) -> String {
     let mut child = Command::new(shell)
+        .current_dir(dir)
         .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -165,7 +186,7 @@ fn fish_offers_enum_values_containing_spaces_as_single_candidates() {
 }
 #[test]
 #[cfg(feature = "shell-tests")]
-fn powershell_offers_nothing_after_a_free_text_flag() {
+fn powershell_offers_no_flags_or_commands_after_a_free_text_flag() {
     let script = generate(app().schema(), Shell::PowerShell);
     let probe = format!(
         "{script}\n$text='demo db seed --label '; [System.Management.Automation.CommandCompletion]::CompleteInput($text,$text.Length,$null).CompletionMatches | ForEach-Object {{ $_.CompletionText }}\n"
@@ -188,6 +209,105 @@ fn powershell_supports_inline_enum_values() {
         "{script}\n$text='demo db seed --region=e'; [System.Management.Automation.CommandCompletion]::CompleteInput($text,$text.Length,$null).CompletionMatches | ForEach-Object {{ $_.CompletionText }}\n"
     );
     assert_eq!(run_powershell(&probe).trim(), "--region=eu");
+}
+#[test]
+#[cfg(feature = "shell-tests")]
+fn bash_completes_files_only_for_path_values_and_positionals() {
+    let dir = workspace();
+    let script = generate(files_app().schema(), Shell::Bash);
+    let probe = format!(
+        "{script}\nt() {{ echo \"== $*\"; COMP_WORDS=(\"$@\"); COMP_CWORD=$(($#-1)); COMPREPLY=(); _demo_complete 2>/dev/null; printf '%s\\n' \"${{COMPREPLY[@]}}\"; }}\nt demo pack --label ''\nt demo pack --out in\nt demo pack in\nt demo pack input.txt ''\nt demo pack -- in\n"
+    );
+    let output = run_in(dir.path(), "bash", &[], &probe);
+    let sections: Vec<&str> = output.split("== ").skip(1).collect();
+    assert_eq!(sections[0], "demo pack --label \n\n", "{output}");
+    assert_eq!(sections[1], "demo pack --out in\ninput.txt\n", "{output}");
+    assert_eq!(sections[2], "demo pack in\ninput.txt\n", "{output}");
+    let (header, mode) = sections[3].split_once('\n').unwrap();
+    assert_eq!(header, "demo pack input.txt ", "{output}");
+    assert!(mode.ends_with("fast\nslow\n"), "{output}");
+    assert!(!mode.contains("input.txt"), "{output}");
+    assert_eq!(sections[4], "demo pack -- in\ninput.txt\n", "{output}");
+}
+#[test]
+#[cfg(feature = "shell-tests")]
+fn zsh_completes_on_the_first_autoloaded_call_and_every_later_one() {
+    let dir = workspace();
+    let functions = dir.path().join("functions");
+    std::fs::create_dir(&functions).unwrap();
+    let script = generate(files_app().schema(), Shell::Zsh);
+    std::fs::write(functions.join("_demo"), &script).unwrap();
+    let stubs = "compadd() { local p=''; while [[ $1 != -- && $# -gt 0 ]]; do [[ $1 == -P ]] && { p=$2; shift; }; shift; done; shift; for w in \"$@\"; do print -r -- \"$p$w\"; done; }\ncompset() { print -r -- \"compset $*\"; }\n_files() { print -r -- FILES; }\ncompdef() { print -r -- \"compdef $*\"; }\n";
+    let probe = format!(
+        "{stubs}fpath=({} $fpath); autoload -Uz _demo\nprint '== out'; words=(demo pack --out=in); CURRENT=3; _demo\nprint '== mode'; words=(demo pack input.txt ''); CURRENT=4; _demo\nprint '== label'; words=(demo pack --label ''); CURRENT=4; _demo; print status=$?\nprint '== source'; source {}\n",
+        functions.display(),
+        functions.join("_demo").display()
+    );
+    let output = run_in(dir.path(), "zsh", &["-f"], &probe);
+    let sections: Vec<&str> = output.split("== ").skip(1).collect();
+    assert_eq!(sections[0], "out\ncompset -P --out=\nFILES\n", "{output}");
+    assert!(sections[1].contains("\nfast\nslow\n"), "{output}");
+    assert!(!sections[1].contains("FILES"), "{output}");
+    assert_eq!(sections[2], "label\nstatus=1\n", "{output}");
+    assert_eq!(
+        sections[3], "source\ncompdef _demo_complete demo\n",
+        "{output}"
+    );
+}
+#[test]
+#[cfg(feature = "shell-tests")]
+fn fish_completes_files_only_for_path_values_and_positionals() {
+    let dir = workspace();
+    let script = generate(files_app().schema(), Shell::Fish);
+    let probe = format!(
+        "{script}\nfor line in 'demo pack --label ' 'demo pack --out in' 'demo pack in' 'demo pack input.txt ' 'demo pack -- in'\n  echo \"== $line\"\n  complete -C $line\nend\n"
+    );
+    let output = run_in(dir.path(), "fish", &["--no-config"], &probe);
+    let sections: Vec<&str> = output.split("== ").skip(1).collect();
+    assert_eq!(sections[0], "demo pack --label \n", "{output}");
+    assert_eq!(sections[1], "demo pack --out in\ninput.txt\n", "{output}");
+    assert_eq!(sections[2], "demo pack in\ninput.txt\n", "{output}");
+    assert_eq!(
+        sections[3], "demo pack input.txt \nfast\nslow\n",
+        "{output}"
+    );
+    assert_eq!(sections[4], "demo pack -- in\ninput.txt\n", "{output}");
+}
+#[test]
+#[cfg(feature = "shell-tests")]
+fn powershell_falls_back_to_files_only_for_path_values() {
+    let dir = workspace();
+    let script = generate(files_app().schema(), Shell::PowerShell);
+    let probe = format!(
+        "{script}\nforeach ($t in 'demo pack --label ab', 'demo pack --out in', 'demo pack input.txt ') {{ '== ' + $t; [System.Management.Automation.CommandCompletion]::CompleteInput($t,$t.Length,$null).CompletionMatches | ForEach-Object {{ $_.CompletionText }} }}\n"
+    );
+    let output = run_in(
+        dir.path(),
+        "pwsh",
+        &[
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            &probe,
+        ],
+        "",
+    );
+    let sections: Vec<&str> = output.split("== ").skip(1).collect();
+    assert_eq!(
+        sections[0].trim_end(),
+        "demo pack --label ab\nab",
+        "{output}"
+    );
+    assert_eq!(
+        sections[1].trim_end(),
+        "demo pack --out in\n./input.txt",
+        "{output}"
+    );
+    let (header, mode) = sections[2].split_once('\n').unwrap();
+    assert_eq!(header, "demo pack input.txt ", "{output}");
+    assert!(mode.trim_end().ends_with("fast\nslow"), "{output}");
+    assert!(!mode.contains("input.txt"), "{output}");
 }
 #[test]
 fn cli_completion_command_uses_the_same_generator() {

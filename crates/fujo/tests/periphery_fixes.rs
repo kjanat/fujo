@@ -202,7 +202,7 @@ mod completion {
         );
         assert!(fish.contains("complete -c 'demo' -l 'json'\n"), "{fish}");
         assert!(
-            fish.contains("complete -c 'demo' -l 'completions' -r -f -a "),
+            fish.contains("complete -c 'demo' -l 'completions' -x -a "),
             "{fish}"
         );
         let powershell = generate(app().schema(), Shell::PowerShell);
@@ -217,19 +217,21 @@ mod completion {
         let program = cli("demo")
             .command(command("send").flag(flag::enumeration("value", ["a b", "c'd", "e\\f"])));
         let fish = generate(program.schema(), Shell::Fish);
-        let expected = r#" -f -a '\'a b\' \'c\\\'d\' \'e\\\\f\''"#;
+        let expected = r#" -x -a '\'a b\' \'c\\\'d\' \'e\\\\f\''"#;
         assert!(fish.contains(&format!("{expected}\n")), "{fish}");
     }
 
     #[test]
-    fn powershell_clears_candidates_after_free_text_flags() {
+    fn powershell_returns_the_typed_word_after_free_text_flags() {
         let powershell = generate(app().schema(), Shell::PowerShell);
         assert!(
-            powershell.contains("    'db seed:--label' { $candidates = @() }\n"),
+            powershell.contains(
+                "      'db seed:--label' { if ($valueCur) { [System.Management.Automation.CompletionResult]::new($prefix + $valueCur, $valueCur, 'ParameterValue', $valueCur) }; return }\n"
+            ),
             "{powershell}"
         );
         assert!(
-            powershell.contains("    'db seed:--region' { $candidates = @('us', 'eu') }\n"),
+            powershell.contains("      'db seed:--region' { @('us', 'eu') | Where-Object"),
             "{powershell}"
         );
     }
@@ -249,12 +251,16 @@ mod completion {
             "{bash}"
         );
         assert!(
-            bash.contains("    'db:--config')\n      mapfile -t COMPREPLY"),
+            bash.contains(
+                "    'db:--config')\n      [[ -z $prefix ]] && compopt -o filenames 2>/dev/null\n      mapfile -t COMPREPLY"
+            ),
             "{bash}"
         );
         let zsh = generate(program.schema(), Shell::Zsh);
         assert!(
-            zsh.contains("    'db:--config')\n      _files; return ;;\n"),
+            zsh.contains(
+                "    'db:--config')\n      [[ -n $prefix ]] && compset -P \"$prefix\"\n      _files; return ;;\n"
+            ),
             "{zsh}"
         );
         let fish = generate(program.schema(), Shell::Fish);
@@ -264,12 +270,12 @@ mod completion {
         );
         assert!(
             fish.contains(
-                "complete -c 'demo' -l 'completions' -r -f -a '\\'bash\\' \\'zsh\\' \\'fish\\' \\'powershell\\''\n"
+                "complete -c 'demo' -l 'completions' -x -a '\\'bash\\' \\'zsh\\' \\'fish\\' \\'powershell\\''\n"
             ),
             "{fish}"
         );
         assert!(
-            fish.contains("complete -c 'demo' -l 'config' -r\n"),
+            fish.contains("complete -c 'demo' -l 'config' -r -F\n"),
             "{fish}"
         );
         let powershell = generate(program.schema(), Shell::PowerShell);
@@ -279,8 +285,37 @@ mod completion {
         );
         assert!(
             powershell.contains(
-                "    ':--completions' { $candidates = @('bash', 'zsh', 'fish', 'powershell') }\n"
+                "      ':--completions' { @('bash', 'zsh', 'fish', 'powershell') | Where-Object"
             ),
+            "{powershell}"
+        );
+        assert!(
+            powershell.contains("      ':--config' { return }\n"),
+            "{powershell}"
+        );
+    }
+
+    #[test]
+    fn a_negated_value_flag_does_not_consume_the_next_word() {
+        let program = cli("demo").command(
+            command("pack")
+                .flag(flag::parse::<bool>("cache").negatable())
+                .arg(fujo::arg::path("input")),
+        );
+        for shell in [Shell::Bash, Shell::Zsh] {
+            let script = generate(program.schema(), shell);
+            assert!(
+                script.contains("      'pack:--cache') skip=1; continue ;;\n"),
+                "{script}"
+            );
+            assert!(!script.contains("'pack:--no-cache') skip=1"), "{script}");
+        }
+        let fish = generate(program.schema(), Shell::Fish);
+        assert!(fish.contains("-l 'cache' -d '' -x\n"), "{fish}");
+        assert!(fish.contains("-l 'no-cache' -d ''\n"), "{fish}");
+        let powershell = generate(program.schema(), Shell::PowerShell);
+        assert!(
+            !powershell.contains("'pack:--no-cache' { $skip"),
             "{powershell}"
         );
     }

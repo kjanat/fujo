@@ -545,6 +545,13 @@ The generators also support PowerShell. Calling the flag without a shell detects
 `SHELL` in native runs and falls back to Bash. Programmatic callers can use
 `completion::generate(app.schema(), Shell::Bash)`.
 
+Values complete by type. Choices list their values, path flags and path
+arguments complete file names, and free-text values complete nothing. Words
+after `--` complete as arguments only. The Zsh script works when sourced and
+when installed as `_mycli` in `fpath`. PowerShell lists files after an empty
+free-text value, because it falls back to files whenever a completer returns
+nothing.
+
 ## Configuration and testing
 
 `.config(ConfigSettings::new("mycli"))` discovers JSON config files along project
