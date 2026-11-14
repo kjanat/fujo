@@ -916,12 +916,24 @@ fn abbreviated_long_options_complete_values_without_suggesting_prefixes() {
             vec!["--g=bash"],
             vec!["json"],
             vec!["--col=always"],
-            vec!["--format"],
         ]
         .iter()
         .enumerate()
         {
             assert_eq!(&results[i], expected, "{shell:?} {:?}", cases[i]);
+        }
+        if shell == Shell::Fish {
+            // Fish versions differ in fuzzy matching of visible option names.
+            assert!(results[6].iter().any(|name| name == "--format"));
+            assert!(
+                results[6]
+                    .iter()
+                    .all(|name| matches!(name.as_str(), "--format" | "--files-from")),
+                "{:?}",
+                results[6]
+            );
+        } else {
+            assert_eq!(results[6], ["--format"], "{shell:?}");
         }
         assert!(
             !results[7].iter().any(|s| s == "json" || s == "json1"),
