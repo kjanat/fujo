@@ -270,6 +270,8 @@ pub struct InputSchema {
     #[serde(skip)]
     pub(crate) native_default: Option<NativeValue>,
     #[serde(skip)]
+    pub(crate) missing_value: Option<NativeValue>,
+    #[serde(skip)]
     pub(crate) native_validators: Vec<NativeValidator>,
     #[serde(skip)]
     pub(crate) encoder: Option<Encoder>,
@@ -282,12 +284,30 @@ pub struct InputSchema {
     pub(crate) compiled_pattern: Option<Regex>,
 }
 
+/// A relationship target identifies a declaration by surface and canonical name.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct InputRef {
+    pub name: String,
+    pub surface: Surface,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ValueArity {
+    None,
+    Required,
+    Optional,
+}
+
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InputDeclaration {
     pub name: String,
     pub surface: Surface,
     pub kind: Kind,
+    pub value_arity: ValueArity,
+    pub conflicts: Vec<InputRef>,
+    pub requires: Vec<InputRef>,
     pub description: String,
     pub aliases: Vec<Alias>,
     pub required: bool,
@@ -302,6 +322,8 @@ pub struct InputDeclaration {
     pub stdin: Option<StdinBinding>,
     pub prompt: Option<Prompt>,
     pub enum_values: Vec<String>,
+    #[serde(skip)]
+    pub(crate) choices_declared: bool,
     pub cli_split: Split,
     pub env_split: Split,
     pub stdin_split: Split,
@@ -394,6 +416,13 @@ impl InputSchema {
                 name: name.into(),
                 surface,
                 kind,
+                value_arity: if matches!(kind, Kind::Boolean | Kind::Count) {
+                    ValueArity::None
+                } else {
+                    ValueArity::Required
+                },
+                conflicts: vec![],
+                requires: vec![],
                 description: String::new(),
                 aliases: vec![],
                 required: surface == Surface::Arg,
@@ -408,6 +437,7 @@ impl InputSchema {
                 stdin: None,
                 prompt: None,
                 enum_values: vec![],
+                choices_declared: false,
                 cli_split: Split::Whole,
                 env_split: Split::Delimiter(crate::delimiter!(",")),
                 stdin_split: Split::Lines,
@@ -432,6 +462,7 @@ impl InputSchema {
             native_type: None,
             native_decoder: None,
             native_default: None,
+            missing_value: None,
             native_validators: vec![],
             encoder: None,
             validation_encoder: None,
@@ -441,7 +472,7 @@ impl InputSchema {
         }
     }
     pub fn expects_value(&self) -> bool {
-        !matches!(self.kind, Kind::Boolean | Kind::Count)
+        self.value_arity != ValueArity::None
     }
     pub fn collection(&self) -> bool {
         self.variadic || matches!(self.kind, Kind::Array | Kind::KeyValue)
@@ -626,6 +657,22 @@ impl InputSchema {
         Ok(())
     }
     pub(crate) fn validate_definition(&self) -> Result<()> {
+        if self.value_arity == ValueArity::Optional
+            && (self.surface != Surface::Flag || self.collection() || self.missing_value.is_none())
+        {
+            return Err(CliError::new(
+                "INVALID_SCHEMA",
+                "Optional values require a scalar flag and an implicit value",
+            ));
+        }
+        if let Some(value) = &self.missing_value {
+            if let Some(json) = self.default_validation_json(value) {
+                crate::resolve::validate_default(self, &json)?;
+            }
+            for validate in &self.native_validators {
+                validate(value)?;
+            }
+        }
         if let Some(prompt) = &self.prompt {
             prompt.validate_definition()?;
         }
@@ -637,6 +684,12 @@ impl InputSchema {
             return Err(CliError::new(
                 "INVALID_SCHEMA",
                 "JSON Schema must be an object or boolean",
+            ));
+        }
+        if (self.kind == Kind::Enum || self.choices_declared) && self.enum_values.is_empty() {
+            return Err(CliError::new(
+                "INVALID_SCHEMA",
+                "A choice list needs at least one choice",
             ));
         }
         if !self.enum_values.is_empty()

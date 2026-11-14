@@ -541,8 +541,13 @@ fn review_app() -> fujo::Cli {
 
 #[cfg(feature = "shell-tests")]
 fn review_results(shell: Shell, cases: &[&[&str]]) -> Vec<Vec<String>> {
+    completion_results(&review_app(), shell, cases)
+}
+
+#[cfg(feature = "shell-tests")]
+fn completion_results(app: &fujo::Cli, shell: Shell, cases: &[&[&str]]) -> Vec<Vec<String>> {
     let dir = workspace();
-    let script = generate(review_app().schema(), shell);
+    let script = generate(app.schema(), shell);
     if shell == Shell::Zsh {
         let checker = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../scripts/check-completion-zsh.py");
@@ -659,8 +664,7 @@ fn short_clusters_consume_attached_and_separate_operands() {
             &["demo", "flags", "--", "-vo", "f"],
         ],
         &[
-            "fast", "fast", "fast", "fast", "fast", "-vsfast", "fast", "fast", "fast", "fast",
-            "foo",
+            "fast", "fast", "fast", "fast", "fast", "-vsfast", "fast", "fast", "fast", "foo", "foo",
         ],
     );
 }
@@ -734,4 +738,114 @@ _demo_complete; printf '%s\n' "${{COMPREPLY[@]}}"
     );
     let output = run_in(dir.path(), "bash", &["--noprofile", "--norc"], &probe);
     assert_eq!(output, "input.txt\nfast\ninput.txt\n");
+}
+
+#[cfg(feature = "shell-tests")]
+#[test]
+#[ignore = "PowerShell does not invoke native completers for dash-prefixed strings after -- (issue #24)"]
+fn powershell_completes_dash_prefixed_files_after_separator() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("-dash.sh"), "").unwrap();
+    let app = cli("demo").default(command("run").arg(fujo::arg::path("files").variadic()));
+    let script = generate(app.schema(), Shell::PowerShell);
+    let output = run_powershell_in(
+        dir.path(),
+        &format!(
+            "{script}\n$line = 'demo -- -d'; [System.Management.Automation.CommandCompletion]::CompleteInput($line, $line.Length, $null).CompletionMatches | ForEach-Object CompletionText"
+        ),
+    );
+    assert!(output.contains("-dash.sh"), "{output:?}");
+}
+
+#[cfg(feature = "shell-tests")]
+#[test]
+fn optional_values_only_complete_attached_operands() {
+    let app = cli("demo").default(
+        command("run")
+            .flag(
+                flag::enumeration("color", ["auto", "always", "never"])
+                    .alias("C")
+                    .optional_value("auto".into()),
+            )
+            .arg(fujo::arg::path("files").variadic()),
+    );
+    let cases: &[&[&str]] = &[
+        &["demo", "--color", "in"],
+        &["demo", "-C", "in"],
+        &["demo", "--color=al"],
+        &["demo", "-Cal"],
+    ];
+    for shell in [Shell::Bash, Shell::Zsh, Shell::Fish, Shell::PowerShell] {
+        let results = completion_results(&app, shell, cases);
+        assert_eq!(
+            results,
+            vec![
+                vec!["input.txt"],
+                vec!["input.txt"],
+                vec!["--color=always"],
+                vec!["-Calways"]
+            ],
+            "{shell:?}"
+        );
+    }
+}
+
+#[cfg(feature = "shell-tests")]
+#[test]
+fn powershell_tooltips_preserve_descriptions_and_candidate_types() {
+    let description = "Output's \"format\": $value [x] `tick` \\ slash";
+    let app = cli("demo")
+        .flag(flag::string("format").describe(description))
+        .command(command("build").describe(description));
+    let script = generate(app.schema(), Shell::PowerShell);
+    let output = run_powershell(&format!(
+        "{script}\nforeach ($line in 'demo --for', 'demo bu') {{ [System.Management.Automation.CommandCompletion]::CompleteInput($line, $line.Length, $null).CompletionMatches | ForEach-Object {{ $_.ToolTip; $_.ResultType.ToString() }} }}"
+    ));
+    assert_eq!(
+        output,
+        format!("{description}\nParameterName\n{description}\nCommand\n")
+    );
+}
+
+#[cfg(feature = "shell-tests")]
+#[test]
+fn powershell_completer_handles_literal_dash_paths_when_invoked() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("-dash.sh"), "").unwrap();
+    let app = cli("demo").default(command("run").arg(fujo::arg::path("files").variadic()));
+    let script = generate(app.schema(), Shell::PowerShell);
+    let output = run_powershell_in(
+        dir.path(),
+        &format!(
+            "function Register-ArgumentCompleter {{ param([switch]$Native, $CommandName, $ScriptBlock); $script:completer = $ScriptBlock }}\n{script}\n$line = 'demo -- -d'; $ast = [System.Management.Automation.Language.Parser]::ParseInput($line, [ref]$null, [ref]$null).EndBlock.Statements[0].PipelineElements[0]; & $script:completer '-d' $ast $line.Length | ForEach-Object CompletionText"
+        ),
+    );
+    assert!(output.contains("-dash.sh"), "{output:?}");
+}
+
+#[cfg(all(feature = "shell-tests", unix))]
+#[test]
+fn zsh_displays_escaped_flag_and_command_descriptions() {
+    let description = "Say 'hi': $x [ok] \\ yes";
+    let app = cli("demo")
+        .flag(flag::string("format").describe(description))
+        .command(command("build").describe(description));
+    let dir = workspace();
+    let checker = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../scripts/check-completion-zsh.py");
+    let output = run_in(
+        dir.path(),
+        "python3",
+        &[checker.to_str().unwrap()],
+        &serde_json::to_string(&(
+            generate(app.schema(), Shell::Zsh),
+            vec![vec!["demo", "--"], vec!["demo", ""]],
+            true,
+        ))
+        .unwrap(),
+    );
+    let displays: Vec<String> = serde_json::from_str(&output).unwrap();
+    for display in displays {
+        assert!(display.contains(description), "{display:?}");
+    }
 }

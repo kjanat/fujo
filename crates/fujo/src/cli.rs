@@ -34,13 +34,26 @@ use crate::typed::StageInfo;
 pub use fujo_core::command::Builtins;
 pub use fujo_core::command::ProgramSchema;
 use fujo_core::command::with_flags;
+use fujo_core::parse::os_strip_prefix;
 use std::collections::BTreeSet;
+use std::ffi::{OsStr, OsString};
 use std::path::Path;
 use std::process::ExitCode;
 use std::sync::Arc;
 
 pub trait Plugin: Send + Sync {
     fn before_parse(&self, _argv: &mut Vec<String>) -> Result<()> {
+        Ok(())
+    }
+    /// Override to transform native arguments, including non-Unicode paths.
+    /// The default adapter preserves the existing UTF-8 hook contract.
+    fn before_parse_os(&self, argv: &mut Vec<OsString>) -> Result<()> {
+        let mut text = argv
+            .iter()
+            .map(|s| os_text(s).map(str::to_owned))
+            .collect::<Result<Vec<_>>>()?;
+        self.before_parse(&mut text)?;
+        *argv = text.into_iter().map(OsString::from).collect();
         Ok(())
     }
     fn before_execute(&self, _context: &mut Context) -> Result<()> {
@@ -73,6 +86,7 @@ pub fn cli(name: &str) -> Cli {
         schema: ProgramSchema {
             name: name.into(),
             version: None,
+            completion_version: None,
             description: String::new(),
             commands: vec![],
             default: None,
@@ -211,8 +225,14 @@ impl Cli {
                     }
                 }
             }
+            let propagated = command
+                .flags
+                .iter()
+                .filter(|flag| flag.propagate)
+                .cloned()
+                .collect::<Vec<_>>();
             for child in &command.commands {
-                check(child, reserved)?;
+                check(&with_flags(child.clone(), &propagated), reserved)?;
             }
             Ok(())
         }
@@ -258,7 +278,7 @@ impl Cli {
         options: RunOptions,
     ) -> RunResult {
         self.execute_inner(
-            argv.into_iter().map(Into::into).collect(),
+            argv.into_iter().map(|s| OsString::from(s.into())).collect(),
             options,
             None,
             None,
@@ -271,7 +291,7 @@ impl Cli {
         options: RunOptions,
     ) -> RunResult {
         self.execute_inner_async(
-            argv.into_iter().map(Into::into).collect(),
+            argv.into_iter().map(|s| OsString::from(s.into())).collect(),
             options,
             None,
             None,
@@ -294,7 +314,7 @@ impl Cli {
         runtime: &dyn Runtime,
     ) -> RunResult {
         self.execute_inner_async(
-            argv.into_iter().map(Into::into).collect(),
+            argv.into_iter().map(|s| OsString::from(s.into())).collect(),
             options,
             Some(runtime),
             None,
@@ -307,8 +327,8 @@ impl Cli {
         options: RunOptions,
         runtime: &dyn Runtime,
     ) -> RunResult {
-        let (argv, error) = decode_os_args(argv);
-        self.execute_inner_async(argv, options, Some(runtime), error)
+        let argv = argv.into_iter().map(Into::into).collect();
+        self.execute_inner_async(argv, options, Some(runtime), None)
             .await
     }
     /// Run with native stdio, environment, and filesystem.
@@ -327,7 +347,7 @@ impl Cli {
         runtime: &dyn Runtime,
     ) -> RunResult {
         self.execute_inner(
-            argv.into_iter().map(Into::into).collect(),
+            argv.into_iter().map(|s| OsString::from(s.into())).collect(),
             options,
             Some(runtime),
             None,
@@ -339,12 +359,12 @@ impl Cli {
         options: RunOptions,
         runtime: &dyn Runtime,
     ) -> RunResult {
-        let (decoded, error) = decode_os_args(argv);
-        self.execute_inner(decoded, options, Some(runtime), error)
+        let argv = argv.into_iter().map(Into::into).collect();
+        self.execute_inner(argv, options, Some(runtime), None)
     }
     fn execute_inner(
         &self,
-        argv: Vec<String>,
+        argv: Vec<OsString>,
         options: RunOptions,
         runtime: Option<&dyn Runtime>,
         initial_error: Option<CliError>,
@@ -377,7 +397,7 @@ impl Cli {
     }
     async fn execute_inner_async(
         &self,
-        argv: Vec<String>,
+        argv: Vec<OsString>,
         options: RunOptions,
         runtime: Option<&dyn Runtime>,
         initial_error: Option<CliError>,
@@ -410,7 +430,7 @@ impl Cli {
     }
     fn prepare(
         &self,
-        mut argv: Vec<String>,
+        mut argv: Vec<OsString>,
         mut options: RunOptions,
         runtime: Option<&dyn Runtime>,
         initial_error: Option<CliError>,
@@ -421,7 +441,7 @@ impl Cli {
             if failure.is_some() {
                 break;
             }
-            if let Err(error) = plugin.before_parse(&mut argv) {
+            if let Err(error) = plugin.before_parse_os(&mut argv) {
                 failure = Some(error);
                 break;
             }
@@ -462,22 +482,24 @@ impl Cli {
                     || parse::includes_before_separator(&argv, "-h"));
             #[cfg(feature = "completion")]
             if self.schema.completions {
-                if let Some(index) = argv
-                    .iter()
-                    .take_while(|s| *s != "--")
-                    .position(|s| s == "--completions" || s.starts_with("--completions="))
-                {
-                    let shell = argv[index]
-                        .split_once('=')
-                        .map(|(_, s)| s.to_owned())
-                        .or_else(|| argv.get(index + 1).filter(|s| !s.starts_with('-')).cloned());
-                    let shell = shell.map(|s| s.parse()).unwrap_or_else(|| {
-                        Ok(runtime
-                            .and_then(|r| r.env("SHELL"))
-                            .as_deref()
-                            .and_then(help::shell_from_path)
-                            .unwrap_or(Shell::Bash))
-                    })?;
+                if let Some(index) = argv.iter().take_while(|s| *s != "--").position(|s| {
+                    s == "--completions" || os_strip_prefix(s, "--completions=").is_some()
+                }) {
+                    let shell = os_strip_prefix(&argv[index], "--completions=").or_else(|| {
+                        argv.get(index + 1)
+                            .filter(|s| !s.as_encoded_bytes().starts_with(b"-"))
+                            .cloned()
+                    });
+                    let shell = shell
+                        .as_deref()
+                        .map(|s| os_text(s)?.parse())
+                        .unwrap_or_else(|| {
+                            Ok(runtime
+                                .and_then(|r| r.env("SHELL"))
+                                .as_deref()
+                                .and_then(help::shell_from_path)
+                                .unwrap_or(Shell::Bash))
+                        })?;
                     output.raw_stdout(&completion::generate_with_options(
                         &self.schema,
                         shell,
@@ -490,12 +512,10 @@ impl Cli {
                         output.raw_stdout("Usage: completions <bash|zsh|fish|powershell>\n");
                         return Ok(None);
                     }
-                    let shell = argv
-                        .get(1)
-                        .ok_or_else(|| {
-                            CliError::parse("MISSING_VALUE", "Specify a completion shell")
-                        })?
-                        .parse()?;
+                    let shell = os_text(argv.get(1).ok_or_else(|| {
+                        CliError::parse("MISSING_VALUE", "Specify a completion shell")
+                    })?)?
+                    .parse()?;
                     if argv.len() != 2 {
                         return Err(CliError::parse(
                             "UNEXPECTED_POSITIONAL",
@@ -593,7 +613,7 @@ impl Cli {
                 }
                 return Ok(None);
             }
-            let parsed = parse::parse(&invocation.schema, &invocation.argv, options.parse)?;
+            let parsed = parse::parse_os(&invocation.schema, &invocation.argv, options.parse)?;
             if let Some(runtime) = runtime {
                 for input in invocation
                     .schema
@@ -706,7 +726,7 @@ impl Cli {
     }
     fn invocation<'a>(
         &'a self,
-        argv: &[String],
+        argv: &[OsString],
         options: ParseOptions,
     ) -> Result<Option<Invocation<'a>>> {
         let mut rest = argv.to_vec();
@@ -730,10 +750,10 @@ impl Cli {
                 break;
             };
             let name = &rest[index];
-            if let Some(command) = children
-                .iter()
-                .find(|c| c.schema.name == *name || c.schema.aliases.contains(name))
-            {
+            if let Some(command) = children.iter().find(|c| {
+                name == c.schema.name.as_str()
+                    || c.schema.aliases.iter().any(|alias| name == alias.as_str())
+            }) {
                 let parent = selected.filter(|_| matched);
                 rest.remove(index);
                 matched = true;
@@ -757,14 +777,16 @@ impl Cli {
                 break;
             } else {
                 let suggestion = parse::suggest_command(
-                    name,
+                    os_text(name)?,
                     children
                         .iter()
                         .filter(|c| !c.schema.hidden)
                         .map(|c| c.schema.name.as_str()),
                 );
-                let mut error =
-                    CliError::parse("UNKNOWN_COMMAND", format!("Unknown command '{name}'"));
+                let mut error = CliError::parse(
+                    "UNKNOWN_COMMAND",
+                    format!("Unknown command '{}'", name.to_string_lossy()),
+                );
                 if let Some(suggestion) = suggestion {
                     error = error.suggest(suggestion);
                 }
@@ -772,7 +794,10 @@ impl Cli {
             }
         }
         let Some(command) = selected else {
-            if rest.iter().any(|s| s.starts_with('-') && s != "--") {
+            if rest
+                .iter()
+                .any(|s| s.as_encoded_bytes().starts_with(b"-") && s != "--")
+            {
                 return Err(CliError::parse("UNKNOWN_FLAG", "Unknown root flag"));
             }
             return Ok(None);
@@ -792,33 +817,38 @@ impl Cli {
 struct Invocation<'a> {
     command: &'a Command,
     schema: CommandSchema,
-    argv: Vec<String>,
+    argv: Vec<OsString>,
     path: String,
     steps: Vec<Step>,
     stages: Vec<StageInfo>,
 }
-fn command_index(argv: &[String], flags: &[InputSchema], options: ParseOptions) -> Option<usize> {
+fn command_index(argv: &[OsString], flags: &[InputSchema], options: ParseOptions) -> Option<usize> {
     let lookup = parse::flag_lookup(flags, options);
     let mut i = 0;
     while let Some(raw) = argv.get(i) {
         if raw == "--" {
             return None;
         }
-        if let Some(raw) = raw.strip_prefix("--") {
+        if let Some(raw) = os_strip_prefix(raw, "--") {
+            let raw = raw.to_str().unwrap_or("");
             if !raw.contains('=')
-                && lookup
-                    .get(raw)
-                    .is_some_and(|(s, negated)| s.expects_value() && !negated)
+                && lookup.get(raw).is_some_and(|(s, negated)| {
+                    s.value_arity == fujo_core::schema::ValueArity::Required && !negated
+                })
             {
                 i += 1;
             }
-        } else if raw.starts_with('-') && raw != "-" {
-            for (offset, c) in raw[1..].char_indices() {
+        } else if raw.as_encoded_bytes().starts_with(b"-") && raw != "-" {
+            for (offset, c) in raw.to_str().unwrap_or("-")[1..].char_indices() {
                 if lookup
                     .get(&c.to_string())
                     .is_some_and(|(s, _)| s.expects_value())
                 {
-                    if offset + c.len_utf8() == raw.len() - 1 {
+                    if offset + c.len_utf8() == raw.as_encoded_bytes().len() - 1
+                        && lookup.get(&c.to_string()).is_some_and(|(s, _)| {
+                            s.value_arity == fujo_core::schema::ValueArity::Required
+                        })
+                    {
                         i += 1;
                     }
                     break;
@@ -832,7 +862,7 @@ fn command_index(argv: &[String], flags: &[InputSchema], options: ParseOptions) 
     None
 }
 fn strip_modes(
-    argv: &mut Vec<String>,
+    argv: &mut Vec<OsString>,
     builtins: &Builtins,
     options: &mut RunOptions,
 ) -> Option<CliError> {
@@ -845,6 +875,9 @@ fn strip_modes(
         if past {
             return true;
         }
+        let Some(arg) = arg.to_str() else {
+            return true;
+        };
         let (name, value) = arg
             .split_once('=')
             .map(|(n, v)| (n, Some(v)))
@@ -883,19 +916,19 @@ fn strip_modes(
     });
     error
 }
-fn extract_config(argv: &mut Vec<String>) -> Result<Option<String>> {
+fn extract_config(argv: &mut Vec<OsString>) -> Result<Option<OsString>> {
     let mut i = 0;
     let mut path = None;
     while i < argv.len() {
         if argv[i] == "--" {
             break;
         }
-        if let Some(value) = argv[i].strip_prefix("--config=") {
-            path = Some(value.into());
+        if let Some(value) = os_strip_prefix(&argv[i], "--config=") {
+            path = Some(value);
             argv.remove(i);
         } else if argv[i] == "--config" {
             argv.remove(i);
-            if i >= argv.len() || argv[i].starts_with('-') {
+            if i >= argv.len() || argv[i].as_encoded_bytes().starts_with(b"-") {
                 return Err(CliError::parse("MISSING_VALUE", "--config requires a path"));
             }
             path = Some(argv.remove(i));
@@ -930,20 +963,8 @@ struct Prepared<'a> {
     resolved: Option<crate::Resolved>,
     pending: Result<Option<Pending<'a>>>,
 }
-fn decode_os_args(
-    argv: impl IntoIterator<Item = impl Into<std::ffi::OsString>>,
-) -> (Vec<String>, Option<CliError>) {
-    let mut decoded = vec![];
-    let mut error = None;
-    for argument in argv {
-        match argument.into().into_string() {
-            Ok(argument) => decoded.push(argument),
-            Err(_) => {
-                error.get_or_insert_with(|| {
-                    CliError::parse("INVALID_UTF8", "CLI arguments must be valid UTF-8")
-                });
-            }
-        }
-    }
-    (decoded, error)
+fn os_text(value: &OsStr) -> Result<&str> {
+    value
+        .to_str()
+        .ok_or_else(|| CliError::parse("INVALID_UTF8", "Text arguments must be valid UTF-8"))
 }
