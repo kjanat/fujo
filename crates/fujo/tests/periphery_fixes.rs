@@ -226,7 +226,7 @@ mod completion {
         let program = app().config(fujo::config::ConfigSettings::new("demo"));
         let bash = generate(program.schema(), Shell::Bash);
         assert!(
-            bash.contains("      'db seed:--config') skip=1; pending=\"$token\"; continue ;;\n"),
+            bash.contains("      'db seed:--label'|'db seed:--region'|'db seed:--completions'|'db seed:--config') skip=1; pending=\"$token\"; continue ;;\n"),
             "{bash}"
         );
         assert!(
@@ -237,7 +237,7 @@ mod completion {
         );
         assert!(
             bash.contains(
-                "    'db:--config')\n      compopt -o filenames 2>/dev/null\n      mapfile -t COMPREPLY"
+                "    'db:--config')\n      compopt -o filenames 2>/dev/null\n      COMPREPLY=(); while IFS= read -r token"
             ),
             "{bash}"
         );
@@ -250,7 +250,7 @@ mod completion {
         );
         let fish = generate(program.schema(), Shell::Fish);
         assert!(
-            fish.contains("      case 'db:--config'\n        set skip 1\n        set pending $token\n        continue\n"),
+            fish.contains("      case 'db:--region' 'db:--completions' 'db:--config'\n        set skip 1\n        set pending $token\n        continue\n"),
             "{fish}"
         );
         assert!(
@@ -265,18 +265,19 @@ mod completion {
         );
         let powershell = generate(program.schema(), Shell::PowerShell);
         assert!(
-            powershell.contains("      'db:--config' { $skip = $true; $pending = $token }\n"),
+            powershell.contains("      { $_ -cin @('db:--region', 'db:--completions', 'db:--config') } { $skip = $true; $pending = $token }\n"),
             "{powershell}"
         );
         assert!(
             powershell.contains(
-                "      ':--completions' { $matches = @(@('bash', 'zsh', 'fish', 'powershell') | Where-Object"
+                "      { $_ -cin @(':--completions') } { $matches = @(@('bash', 'zsh', 'fish', 'powershell') | Where-Object"
             ),
             "{powershell}"
         );
         assert!(
-            powershell
-                .contains("      ':--config' { & $completeFiles $valueCur $prefix; return }\n"),
+            powershell.contains(
+                "      { $_ -cin @(':--config') } { & $completeFiles $valueCur $prefix; return }\n"
+            ),
             "{powershell}"
         );
     }

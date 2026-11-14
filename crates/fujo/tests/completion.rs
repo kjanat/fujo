@@ -546,8 +546,12 @@ fn review_results(shell: Shell, cases: &[&[&str]]) -> Vec<Vec<String>> {
 
 #[cfg(feature = "shell-tests")]
 fn completion_results(app: &fujo::Cli, shell: Shell, cases: &[&[&str]]) -> Vec<Vec<String>> {
+    completion_script_results(shell, cases, generate(app.schema(), shell))
+}
+
+#[cfg(feature = "shell-tests")]
+fn completion_script_results(shell: Shell, cases: &[&[&str]], script: String) -> Vec<Vec<String>> {
     let dir = workspace();
-    let script = generate(app.schema(), shell);
     if shell == Shell::Zsh {
         let checker = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../scripts/check-completion-zsh.py");
@@ -767,6 +771,7 @@ fn optional_values_only_complete_attached_operands() {
                     .alias("C")
                     .optional_value("auto".into()),
             )
+            .flag(flag::boolean("all").alias("a"))
             .arg(fujo::arg::path("files").variadic()),
     );
     let cases: &[&[&str]] = &[
@@ -871,4 +876,145 @@ fn fish_preserves_description_escapes_and_optional_choice_data() {
     assert!(output.contains(description), "{output:?}");
     assert!(output.contains("safe -raw"), "{output:?}");
     assert!(output.contains("safe -xray"), "{output:?}");
+}
+
+#[cfg(feature = "shell-tests")]
+#[test]
+fn abbreviated_long_options_complete_values_without_suggesting_prefixes() {
+    use fujo::completion::{CompletionOptions, generate_with_config};
+    let app = cli("demo").default(
+        command("run")
+            .flag(flag::enumeration("format", ["json", "yaml"]).hidden_alias("fmt"))
+            .flag(flag::boolean("files-from"))
+            .flag(flag::enumeration("generate-completions", ["bash", "zsh"]))
+            .flag(flag::enumeration("color", ["always", "auto"]).optional_value("auto".into())),
+    );
+    let cases: &[&[&str]] = &[
+        &["demo", "--for", "j"],
+        &["demo", "--for=j"],
+        &["demo", "--g", "b"],
+        &["demo", "--g=b"],
+        &["demo", "--fmt", "j"],
+        &["demo", "--col=al"],
+        &["demo", "--fo"],
+        &["demo", "--f", "j"],
+    ];
+    for shell in [Shell::Bash, Shell::Zsh, Shell::Fish, Shell::PowerShell] {
+        let script = generate_with_config(
+            app.schema(),
+            shell,
+            CompletionOptions {
+                abbreviate_long_options: true,
+                ..Default::default()
+            },
+        );
+        let results = completion_script_results(shell, cases, script);
+        for (i, expected) in [
+            vec!["json"],
+            vec!["--for=json"],
+            vec!["bash"],
+            vec!["--g=bash"],
+            vec!["json"],
+            vec!["--col=always"],
+            vec!["--format"],
+        ]
+        .iter()
+        .enumerate()
+        {
+            assert_eq!(&results[i], expected, "{shell:?} {:?}", cases[i]);
+        }
+        assert!(
+            !results[7].iter().any(|s| s == "json" || s == "json1"),
+            "{shell:?}: {:?}",
+            results[7]
+        );
+        let exact = completion_script_results(shell, &cases[..1], generate(app.schema(), shell));
+        assert!(
+            !exact[0].iter().any(|s| s == "json" || s == "json1"),
+            "default {shell:?}: {exact:?}"
+        );
+    }
+}
+
+#[cfg(feature = "shell-tests")]
+#[test]
+#[ignore = "requires Docker with the bash:3.2 image; run explicitly in shell CI"]
+fn bash_32_completes_paths_with_spaces() {
+    let app = cli("demo").default(
+        command("run")
+            .flag(flag::path("rcfile"))
+            .arg(fujo::arg::path("files").variadic()),
+    );
+    let script = generate(app.schema(), Shell::Bash);
+    let probe = format!(
+        "{script}\ntouch 'my file.txt'\nCOMP_WORDBREAKS=' '\nCOMP_WORDS=(demo my); COMP_CWORD=1; _demo_complete; printf '%s\\n' \"${{COMPREPLY[@]}}\"\nCOMP_WORDS=(demo --rcfile my); COMP_CWORD=2; _demo_complete; printf '%s\\n' \"${{COMPREPLY[@]}}\"\nCOMP_WORDS=(demo --rcfile=my); COMP_CWORD=1; _demo_complete; printf '%s\\n' \"${{COMPREPLY[@]}}\"\n"
+    );
+    assert_eq!(
+        run(
+            "docker",
+            &[
+                "run",
+                "--rm",
+                "-i",
+                "bash:3.2",
+                "bash",
+                "--noprofile",
+                "--norc"
+            ],
+            &probe
+        ),
+        "my file.txt\nmy file.txt\n--rcfile=my file.txt\n"
+    );
+}
+
+#[cfg(feature = "shell-tests")]
+#[test]
+fn abbreviated_options_respect_exact_names_and_command_scope() {
+    use fujo::completion::{CompletionOptions, generate_with_config};
+    let app = cli("demo")
+        .command(
+            command("one")
+                .flag(flag::enumeration("generate-completions", ["bash", "zsh"]))
+                .flag(flag::enumeration("format", ["json"]))
+                .flag(flag::enumeration("formatter", ["pretty"]))
+                .flag(flag::enumeration("color", ["always", "auto"]).optional_value("auto".into())),
+        )
+        .command(command("two").flag(flag::enumeration("genre", ["jazz"])));
+    let cases: &[&[&str]] = &[
+        &["demo", "one", "--g", "b"],
+        &["demo", "two", "--g", "j"],
+        &["demo", "one", "--format", "j"],
+        &["demo", "one", "--form", "j"],
+        &["demo", "one", "--col", "al"],
+        &["demo", "one", "--", "--g=b"],
+    ];
+    for shell in [Shell::Bash, Shell::Zsh, Shell::Fish, Shell::PowerShell] {
+        let script = generate_with_config(
+            app.schema(),
+            shell,
+            CompletionOptions {
+                abbreviate_long_options: true,
+                ..Default::default()
+            },
+        );
+        let results = completion_script_results(shell, cases, script);
+        assert_eq!(results[0], ["bash"], "{shell:?}");
+        assert_eq!(results[1], ["jazz"], "{shell:?}");
+        assert_eq!(results[2], ["json"], "{shell:?}");
+        assert!(
+            !results[3].iter().any(|s| s == "json"),
+            "{shell:?}: {:?}",
+            results[3]
+        );
+        assert!(
+            !results[4].iter().any(|s| s == "always"),
+            "{shell:?}: {:?}",
+            results[4]
+        );
+        assert!(
+            !results[5].iter().any(|s| s == "--g=bash"),
+            "{shell:?}: {:?}",
+            results[5]
+        );
+    }
 }

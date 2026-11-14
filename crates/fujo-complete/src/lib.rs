@@ -92,6 +92,7 @@ struct Positional {
 }
 
 struct Node {
+    abbreviate_long_options: bool,
     path: String,
     flags: Vec<InputSchema>,
     args: Vec<InputSchema>,
@@ -117,6 +118,59 @@ impl Node {
         .chain(flag.negated_name.as_deref().map(fujo_core::parse::spelling))
         .collect()
     }
+    fn abbreviations(
+        &self,
+        globals: &[GlobalFlag],
+        options: ParseOptions,
+    ) -> std::collections::BTreeMap<String, String> {
+        if !self.abbreviate_long_options {
+            return Default::default();
+        }
+        let names: std::collections::BTreeMap<_, _> = self
+            .lookup(options)
+            .iter()
+            .map(|(name, (flag, negated))| {
+                (
+                    fujo_core::parse::spelling(name),
+                    fujo_core::parse::spelling(if *negated {
+                        flag.negated_name.as_deref().unwrap_or(name)
+                    } else {
+                        &flag.name
+                    }),
+                )
+            })
+            .chain(
+                globals
+                    .iter()
+                    .map(|g| (g.long.to_owned(), g.long.to_owned())),
+            )
+            .filter(|(name, _)| name.starts_with("--"))
+            .collect();
+        let mut prefixes = std::collections::BTreeMap::<String, Option<String>>::new();
+        for (name, target) in &names {
+            for (end, _) in name.char_indices().skip(3) {
+                let prefix = &name[..end];
+                prefixes
+                    .entry(prefix.to_owned())
+                    .and_modify(|value| {
+                        if value.as_ref() != Some(target) {
+                            *value = None;
+                        }
+                    })
+                    .or_insert_with(|| Some(target.clone()));
+            }
+        }
+        prefixes
+            .into_iter()
+            .filter_map(|(prefix, name)| {
+                if names.contains_key(&prefix) {
+                    None
+                } else {
+                    name.map(|name| (prefix, name))
+                }
+            })
+            .collect()
+    }
     fn value_forms(&self, globals: &[GlobalFlag], options: ParseOptions) -> Vec<(Values, String)> {
         let lookup = self.lookup(options);
         let mut forms: Vec<_> = lookup
@@ -134,6 +188,17 @@ impl Node {
                     .map(move |form| (Values::global(value), form.to_owned()))
             })
         }));
+        let abbreviations = self.abbreviations(globals, options);
+        let extra: Vec<_> = abbreviations
+            .into_iter()
+            .filter_map(|(prefix, name)| {
+                forms
+                    .iter()
+                    .find(|(_, form)| *form == name)
+                    .map(|(values, _)| (values.clone(), prefix))
+            })
+            .collect();
+        forms.extend(extra);
         forms
     }
     fn required_forms(
@@ -142,11 +207,17 @@ impl Node {
         options: ParseOptions,
     ) -> Vec<(Values, String)> {
         let lookup = self.lookup(options);
+        let abbreviations = self.abbreviations(globals, options);
         self.value_forms(globals, options)
             .into_iter()
             .filter(|(_, form)| {
                 lookup
-                    .get(form.trim_start_matches('-'))
+                    .get(
+                        abbreviations
+                            .get(form)
+                            .unwrap_or(form)
+                            .trim_start_matches('-'),
+                    )
                     .is_none_or(|(flag, _)| flag.value_arity == ValueArity::Required)
             })
             .collect()
@@ -271,6 +342,7 @@ fn nodes(program: &ProgramSchema) -> Vec<Node> {
             flags.extend(command.flags.iter().cloned());
             let propagated: Vec<_> = flags.iter().filter(|f| f.propagate).cloned().collect();
             nodes.push(Node {
+                abbreviate_long_options: false,
                 path: path.clone(),
                 flags,
                 args: command.args.clone(),
@@ -282,6 +354,7 @@ fn nodes(program: &ProgramSchema) -> Vec<Node> {
     let mut flags = program.flags.clone();
     flags.extend(program.default.iter().flat_map(|c| c.flags.iter().cloned()));
     let mut nodes = vec![Node {
+        abbreviate_long_options: false,
         path: String::new(),
         flags,
         args: program
@@ -307,6 +380,7 @@ fn nodes(program: &ProgramSchema) -> Vec<Node> {
     walk(&program.commands, "", &inherited, &mut nodes);
     if program.completions {
         nodes.push(Node {
+            abbreviate_long_options: false,
             path: "completions".into(),
             flags: vec![],
             args: vec![],
@@ -375,7 +449,38 @@ pub fn generate_with_options(
     shell: Shell,
     options: ParseOptions,
 ) -> String {
-    let nodes = nodes(program);
+    generate_with_config(
+        program,
+        shell,
+        CompletionOptions {
+            parse: options,
+            ..Default::default()
+        },
+    )
+}
+
+/// Settings for adapting generated completions to an external parser.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CompletionOptions {
+    /// Spelling rules shared with Fujo's parser.
+    pub parse: ParseOptions,
+    /// Accept unique prefixes of long option names, including one-letter prefixes.
+    /// Exact names take precedence; ambiguous prefixes do not select an option.
+    /// Only full visible names are suggested. Fujo's parser remains unchanged.
+    pub abbreviate_long_options: bool,
+}
+
+/// Generates completions with explicit external-parser behavior.
+pub fn generate_with_config(
+    program: &ProgramSchema,
+    shell: Shell,
+    config: CompletionOptions,
+) -> String {
+    let options = config.parse;
+    let mut nodes = nodes(program);
+    for node in &mut nodes {
+        node.abbreviate_long_options = config.abbreviate_long_options;
+    }
     let function = identifier(&program.name);
     let globals = program.builtins.global_flags(
         program.version.is_some(),
@@ -401,6 +506,18 @@ pub fn generate_with_options(
     } else {
         format!("{header}{script}")
     }
+}
+
+fn grouped_forms(forms: Vec<(Values, String)>) -> Vec<(Values, Vec<String>)> {
+    let mut groups: Vec<(Values, Vec<String>)> = Vec::new();
+    for (values, form) in forms {
+        if let Some((_, names)) = groups.iter_mut().find(|(existing, _)| *existing == values) {
+            names.push(form);
+        } else {
+            groups.push((values, vec![form]));
+        }
+    }
+    groups
 }
 
 fn posix_short(nodes: &[Node], globals: &[GlobalFlag], options: ParseOptions) -> String {
@@ -460,7 +577,7 @@ fn posix_values(values: &Values, bash: bool) -> String {
             } else { "      compadd -- \"${candidates[@]}\"; return\n" });
         }
         Values::Files => script.push_str(if bash {
-            "      compopt -o filenames 2>/dev/null\n      mapfile -t COMPREPLY < <(compgen -f -- \"$value_cur\"); for i in \"${!COMPREPLY[@]}\"; do COMPREPLY[i]=\"$prefix${COMPREPLY[i]}\"; done\n"
+            "      compopt -o filenames 2>/dev/null\n      COMPREPLY=(); while IFS= read -r token; do COMPREPLY+=(\"$prefix$token\"); done < <(compgen -f -- \"$value_cur\")\n"
         } else { "      _files; return\n" }),
         Values::Text => return if bash { "      COMPREPLY=(); return\n" } else { "      return 1\n" }.into(),
         Values::Collection { .. } => unreachable!(),
@@ -495,11 +612,16 @@ fn posix(
     script.push_str(&posix_short(nodes, globals, options));
     script.push_str("    if [[ -n $short_flag ]]; then [[ -z $short_tail && $short_required == 1 ]] && { skip=1; pending=\"$short_flag\"; }; continue; fi\n    case \"$path:$token\" in\n");
     for node in nodes {
-        for (_, form) in node.required_forms(globals, options) {
+        let required = node
+            .required_forms(globals, options)
+            .iter()
+            .map(|(_, form)| quote(&node.keyed(form)))
+            .collect::<Vec<_>>();
+        if !required.is_empty() {
             let _ = writeln!(
                 script,
                 "      {}) skip=1; pending=\"$token\"; continue ;;",
-                quote(&node.keyed(&form))
+                required.join("|")
             );
         }
         for (name, path) in node.child_paths() {
@@ -517,8 +639,13 @@ fn posix(
     script.push_str("  if [[ -n $short_flag && -n $short_tail ]]; then value_flag=\"$short_flag\"; value_cur=\"$short_tail\"; prefix=\"$short_prefix\"; fi\n");
     script.push_str("  if (( ! literal )); then\n  case \"$path:$value_flag\" in\n");
     for node in nodes {
-        for (values, form) in node.value_forms(globals, options) {
-            let _ = writeln!(script, "    {})", quote(&node.keyed(&form)));
+        for (values, forms) in grouped_forms(node.value_forms(globals, options)) {
+            let patterns = forms
+                .iter()
+                .map(|form| quote(&node.keyed(form)))
+                .collect::<Vec<_>>()
+                .join("|");
+            let _ = writeln!(script, "    {patterns})");
             script.push_str(&posix_values(&values, bash));
             script.push_str("      ;;\n");
         }
@@ -705,11 +832,16 @@ fn fish(
         "function {function}_state\n  set -l tokens (commandline -opc)\n  set -e tokens[1]\n  set -l path ''\n  set -l skip 0\n  set -l pending ''\n  set -l pos 0\n  set -l literal 0\n  for token in $tokens\n    if test $skip -eq 1\n      set skip 0\n      set pending ''\n      continue\n    end\n    if test $literal -eq 1\n      set pos (math $pos + 1)\n      continue\n    end\n    if test \"$token\" = --\n      set literal 1\n      continue\n    end\n    set -l short ({function}_short \"$path\" \"$token\")\n    if test (count $short) -eq 4\n      if test -z \"$short[2]\"; and test \"$short[4]\" = 1\n        set skip 1\n        set pending \"$short[1]\"\n      end\n      continue\n    end\n    switch \"$path:$token\"\n"
     );
     for node in nodes {
-        for (_, form) in node.required_forms(globals, options) {
+        let required = node
+            .required_forms(globals, options)
+            .iter()
+            .map(|(_, form)| fish_quote(&node.keyed(form)))
+            .collect::<Vec<_>>();
+        if !required.is_empty() {
             let _ = writeln!(
                 script,
                 "      case {}\n        set skip 1\n        set pending $token\n        continue",
-                quote(&node.keyed(&form))
+                required.join(" ")
             );
         }
         for (name, path) in node.child_paths() {
@@ -764,7 +896,45 @@ fn fish(
                     script.push_str(&fish_values(&Values::of(flag), function, flag.value_arity));
                 }
                 script.push('\n');
+                if !long && flag.value_arity == ValueArity::Optional {
+                    let attached = fish_quote(&format!(
+                        "{function}_attached {}{suffix}",
+                        fish_quote(&form)
+                    ));
+                    let _ = writeln!(
+                        script,
+                        "complete -c {program_name} -n {attached} -s {}{}",
+                        fish_quote(form.trim_start_matches('-')),
+                        fish_values(&Values::of(flag), function, ValueArity::Required)
+                    );
+                }
             }
+        }
+        let visible: Vec<_> = node
+            .visible_flags()
+            .flat_map(|flag| node.forms(&lookup, flag))
+            .collect();
+        let required = node.required_forms(globals, options);
+        for (values, form) in node.value_forms(globals, options) {
+            if !form.starts_with("--")
+                || visible.contains(&form)
+                || globals.iter().any(|g| g.long == form)
+            {
+                continue;
+            }
+            let condition =
+                fish_quote(&format!("{function}_operand {}{suffix}", fish_quote(&form)));
+            let arity = if required.iter().any(|(_, name)| name == &form) {
+                ValueArity::Required
+            } else {
+                ValueArity::Optional
+            };
+            let _ = writeln!(
+                script,
+                "complete -c {program_name} -n {condition} -l {}{}",
+                fish_quote(form.trim_start_matches('-')),
+                fish_values(&values, function, arity)
+            );
         }
         for positional in node.positionals() {
             let action = match &positional.values {
@@ -805,6 +975,14 @@ fn fish(
         }
         script.push('\n');
     }
+    let _ = write!(
+        script,
+        "function {function}_attached --argument-names flag\n  set -l state ({function}_state)\n  test \"$state[2]\" = 0; or return 1\n  set -l expected (string join ' ' -- $argv[2..])\n  test \"$state[3]\" = \"$expected\"; or return 1\n  set -l short ({function}_short \"$state[3]\" (commandline -ct))\n  test (count $short) -eq 4; and test \"$short[1]\" = \"$flag\"; and test -n \"$short[2]\"\nend\n"
+    );
+    let _ = write!(
+        script,
+        "function {function}_operand --argument-names flag\n  set -l state ({function}_state)\n  test \"$state[2]\" = 0; or return 1\n  set -l expected (string join ' ' -- $argv[2..])\n  test \"$state[3]\" = \"$expected\"; or return 1\n  test \"$state[4]\" = \"$flag\"; and return 0\n  string match -q -- \"$flag=*\" (commandline -ct)\nend\n"
+    );
     script.push_str(&fish_short(nodes, globals, function, options));
     script.push_str(&fish_collection(function));
     script
@@ -945,11 +1123,16 @@ fn powershell(
         short = ps_short(nodes, globals, options)
     );
     for node in nodes {
-        for (_, form) in node.required_forms(globals, options) {
+        let required = node
+            .required_forms(globals, options)
+            .iter()
+            .map(|(_, form)| node.keyed(form))
+            .collect::<Vec<_>>();
+        if !required.is_empty() {
             let _ = writeln!(
                 script,
-                "      {} {{ $skip = $true; $pending = $token }}",
-                ps_quote(&node.keyed(&form))
+                "      {{ $_ -cin @({}) }} {{ $skip = $true; $pending = $token }}",
+                ps_words(&required)
             );
         }
         for (name, path) in node.child_paths() {
@@ -963,12 +1146,16 @@ fn powershell(
     }
     script.push_str("      default { if ($token -notlike '-?*') { $pos++ } }\n    }\n    $previous = $token\n  }\n  $valueFlag = $pending; $valueCur = $wordToComplete; $prefix = ''\n  if ($wordToComplete.StartsWith('--') -and $wordToComplete.Contains('=')) { $index = $wordToComplete.IndexOf('='); $valueFlag = $wordToComplete.Substring(0, $index); $valueCur = $wordToComplete.Substring($index+1); $prefix = $valueFlag + '=' }\n  $parsedShort = & $short $wordToComplete $path\n  if ($parsedShort -and $parsedShort.Tail) { $valueFlag = $parsedShort.Flag; $valueCur = $parsedShort.Tail; $prefix = $parsedShort.Prefix }\n  if (-not $literal) {\n    switch -CaseSensitive (\"${path}:$valueFlag\") {\n");
     for node in nodes {
-        for (values, form) in node.value_forms(globals, options) {
+        for (values, forms) in grouped_forms(node.value_forms(globals, options)) {
             let action = ps_values(&values);
+            let names = forms
+                .iter()
+                .map(|form| node.keyed(form))
+                .collect::<Vec<_>>();
             let _ = writeln!(
                 script,
-                "      {} {{ {action} }}",
-                ps_quote(&node.keyed(&form))
+                "      {{ $_ -cin @({}) }} {{ {action} }}",
+                ps_words(&names)
             );
         }
     }

@@ -560,6 +560,7 @@ and fall back to Bash. Applications can call
 
 Choices complete their declared values. Paths complete file names. Free-text
 inputs provide no suggestions. After `--`, completion treats words as arguments.
+Bash scripts support Bash 3.2 and newer, including path completion.
 Zsh scripts work when sourced or installed as `_mycli` in `fpath`.
 
 PowerShell completes paths, including `--config=PATH`. Some versions, including
@@ -600,6 +601,28 @@ also enables `--version -V`. Headers fall back to `.version(...)` when no
 completion version is set. `ParseOptions::default()` accepts kebab-case and
 camelCase spellings of long options; disable case parity to match a parser
 that only accepts declared spellings. Single-character aliases stay case-sensitive.
+
+For an external parser that accepts unique long-option prefixes, use
+`generate_with_config` with `CompletionOptions::abbreviate_long_options`:
+
+```rust
+# use fujo_core::command::ProgramSchema;
+# use fujo_core::parse::ParseOptions;
+# let program = ProgramSchema::new("formatter");
+use fujo_complete::{CompletionOptions, Shell, generate_with_config};
+let script = generate_with_config(&program, Shell::Fish, CompletionOptions {
+    parse: ParseOptions { case_parity: false },
+    abbreviate_long_options: true,
+});
+```
+
+This lets `--for json` select `--format` and `--g bash` select
+`--generate-completions` when those prefixes identify one option in the current
+command. Exact names take precedence over prefixes, and aliases of the same
+option count as one target. Ambiguous prefixes do not select a value completer.
+Only full visible names are suggested; hidden aliases still accept values.
+The setting is opt-in and applies to completion generation for external parsers.
+Fujo's parser continues to require complete option spellings.
 
 `Input::choices`, `flag::enumeration`, `arg::enumeration`, and the value parsers
 accept vectors, slices, iterators, and arrays. Empty choice lists are rejected
