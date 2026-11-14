@@ -157,7 +157,7 @@ fn completion_only_schemas_control_builtins_and_header_separately() {
     }
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 #[test]
 fn native_path_inputs_read_the_exact_non_unicode_file() {
     use std::ffi::OsString;
@@ -373,4 +373,36 @@ fn nested_relationships_resolve_inherited_flags() {
         .code,
         "CONFLICTING_INPUTS"
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn native_path_inputs_preserve_bytes_on_unix() {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::{OsStrExt, OsStringExt};
+    let path = OsString::from_vec(b"input-\xff.svg".to_vec());
+    let app = Cli::new("demo").default(
+        Command::new("read")
+            .inputs((arg::path("file").optional(), flag::path("input").alias("i")))
+            .action(|_, (file, input), ()| {
+                assert_eq!(
+                    file.or(input).unwrap().as_os_str().as_bytes(),
+                    b"input-\xff.svg"
+                );
+                Ok(())
+            }),
+    );
+    let mut long = OsString::from("--input=");
+    long.push(&path);
+    let mut short = OsString::from("-i");
+    short.push(&path);
+    for argv in [
+        vec![path.clone()],
+        vec!["--input".into(), path],
+        vec![long],
+        vec![short],
+    ] {
+        let result = app.run_os_with(argv, RunOptions::default(), &fujo::runtime::NativeRuntime);
+        assert!(result.success(), "{:?}", result.error);
+    }
 }

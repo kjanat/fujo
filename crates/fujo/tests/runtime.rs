@@ -401,18 +401,15 @@ fn async_native_execution_reports_invalid_utf8_before_actions() {
 #[cfg(unix)]
 #[test]
 fn async_native_paths_preserve_filename_bytes() {
+    use std::os::unix::ffi::OsStrExt;
     use std::os::unix::ffi::OsStringExt;
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory
-        .path()
-        .join(std::ffi::OsString::from_vec(b"async-\xff".to_vec()));
-    std::fs::write(&path, "native async").unwrap();
+    let path = PathBuf::from(std::ffi::OsString::from_vec(b"async-\xff".to_vec()));
     let app = cli("demo").default(
         command("read")
             .inputs(fujo::arg::path("file"))
             .action_async(async |_, file, ()| {
                 support::yield_once().await;
-                assert_eq!(std::fs::read_to_string(file).unwrap(), "native async");
+                assert_eq!(file.as_os_str().as_bytes(), b"async-\xff");
                 Ok(())
             }),
     );
