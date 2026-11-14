@@ -172,11 +172,20 @@ pub fn command_help(
                         &crate::parse::canonical_flag_name_with(&lookup, flag),
                     )))
                     .chain(flag.negated_name.as_deref().map(crate::parse::spelling))
+                    .map(|name| {
+                        if flag.value_arity == crate::schema::ValueArity::Optional {
+                            let separator = if name.starts_with("--") { "=" } else { "" };
+                            format!(
+                                "{name}[{separator}<{}>]",
+                                flag.value_hint.as_deref().unwrap_or("value")
+                            )
+                        } else {
+                            name
+                        }
+                    })
                     .collect::<Vec<_>>()
                     .join(", ");
-                let hint = if flag.value_arity == crate::schema::ValueArity::Optional {
-                    format!("[=<{}>]", flag.value_hint.as_deref().unwrap_or("value"))
-                } else if flag.expects_value() {
+                let hint = if flag.value_arity == crate::schema::ValueArity::Required {
                     format!(" <{}>", flag.value_hint.as_deref().unwrap_or("value"))
                 } else {
                     String::new()

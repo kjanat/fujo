@@ -667,10 +667,11 @@ impl InputSchema {
         }
         if let Some(value) = &self.missing_value {
             if let Some(json) = self.default_validation_json(value) {
-                crate::resolve::validate_default(self, &json)?;
+                crate::resolve::validate_default(self, &json)
+                    .map_err(|e| self.failure("INVALID_SCHEMA", &e.message, false))?;
             }
             for validate in &self.native_validators {
-                validate(value)?;
+                validate(value).map_err(|e| self.failure("INVALID_SCHEMA", &e.message, false))?;
             }
         }
         if let Some(prompt) = &self.prompt {

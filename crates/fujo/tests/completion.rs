@@ -849,3 +849,26 @@ fn zsh_displays_escaped_flag_and_command_descriptions() {
         assert!(display.contains(description), "{display:?}");
     }
 }
+
+#[cfg(feature = "shell-tests")]
+#[test]
+fn fish_preserves_description_escapes_and_optional_choice_data() {
+    let description = "It's C:\\";
+    let app = cli("demo")
+        .command(command("build").describe(description))
+        .flag(
+            flag::enumeration("mode", ["safe -raw", "safe -xray"])
+                .describe(description)
+                .optional_value("safe -raw".into()),
+        );
+    let script = generate(app.schema(), Shell::Fish);
+    run("fish", &["-n"], &script);
+    let output = run(
+        "fish",
+        &["--no-config"],
+        &format!("{script}\ncomplete -C 'demo bu'\ncomplete -C 'demo --mode=safe'\n"),
+    );
+    assert!(output.contains(description), "{output:?}");
+    assert!(output.contains("safe -raw"), "{output:?}");
+    assert!(output.contains("safe -xray"), "{output:?}");
+}

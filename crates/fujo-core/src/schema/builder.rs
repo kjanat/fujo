@@ -120,6 +120,18 @@ impl<T, P, S> Input<T, P, S> {
     pub fn into_schema(self) -> InputSchema {
         self.schema
     }
+    /// Rejects explicit selection of both inputs, regardless of selection order.
+    /// Defaults do not count as selections. Register both inputs in the
+    /// applicable command scope.
+    ///
+    /// ```
+    /// use fujo_core::{command::CommandSchema, schema::flag};
+    /// let quiet = flag::boolean("quiet");
+    /// let verbose = flag::boolean("verbose").conflicts_with(&quiet);
+    /// let command = CommandSchema::new("run")
+    ///     .flag(quiet.into_schema()).flag(verbose.into_schema());
+    /// assert!(command.validate().is_ok());
+    /// ```
     pub fn conflicts_with<U, Q, R>(mut self, other: &Input<U, Q, R>) -> Self {
         self.schema_mut().declaration.conflicts.push(InputRef {
             name: other.name().into(),
@@ -127,6 +139,9 @@ impl<T, P, S> Input<T, P, S> {
         });
         self
     }
+    /// Requires an explicit selection of `other` when this input is selected.
+    /// Defaults do not satisfy the requirement. Register both inputs in the
+    /// applicable command scope, as shown in [`Self::conflicts_with`].
     pub fn requires<U, Q, R>(mut self, other: &Input<U, Q, R>) -> Self {
         self.schema_mut().declaration.requires.push(InputRef {
             name: other.name().into(),
@@ -190,6 +205,9 @@ impl<T, P, S> Input<T, P, S> {
         }));
         if let Some(default) = &mut schema.native_default {
             default.json = schema.encoder.as_ref().and_then(|encode| encode(default));
+        }
+        if let Some(value) = &mut schema.missing_value {
+            value.json = schema.encoder.as_ref().and_then(|encode| encode(value));
         }
         self
     }

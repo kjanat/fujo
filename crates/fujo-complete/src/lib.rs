@@ -745,7 +745,7 @@ fn fish(
                 script,
                 "complete -c {program_name} -f -n {condition} -a {} -d {}",
                 quote(name),
-                quote(description)
+                fish_quote(description)
             );
         }
         let lookup = node.lookup(options);
@@ -758,15 +758,10 @@ fn fish(
                     "complete -c {program_name} -n {condition} {} {} -d {}",
                     if long { "-l" } else { "-s" },
                     quote(form.trim_start_matches('-')),
-                    quote(&flag.description)
+                    fish_quote(&flag.description)
                 );
                 if flag.expects_value() && Some(&form) != negated.as_ref() {
-                    let values = fish_values(&Values::of(flag), function);
-                    if flag.value_arity == ValueArity::Optional {
-                        script.push_str(&values.replace(" -x", " -f").replace(" -r", ""));
-                    } else {
-                        script.push_str(&values);
-                    }
+                    script.push_str(&fish_values(&Values::of(flag), function, flag.value_arity));
                 }
                 script.push('\n');
             }
@@ -802,7 +797,11 @@ fn fish(
             let _ = write!(script, " -s {}", quote(short.trim_start_matches('-')));
         }
         if let Some(value) = global.value {
-            script.push_str(&fish_values(&Values::global(value), function));
+            script.push_str(&fish_values(
+                &Values::global(value),
+                function,
+                ValueArity::Required,
+            ));
         }
         script.push('\n');
     }
@@ -810,12 +809,25 @@ fn fish(
     script.push_str(&fish_collection(function));
     script
 }
-fn fish_values(values: &Values, function: &str) -> String {
+fn fish_values(values: &Values, function: &str, arity: ValueArity) -> String {
+    let exclusive = if arity == ValueArity::Optional {
+        " -f"
+    } else {
+        " -x"
+    };
     match values {
-        Values::Collection { .. } => format!(" -x -a {}", fish_collection_action(values, function)),
-        Values::Text => " -x".into(),
-        Values::Files => " -r -F".into(),
-        Values::Choices(choices) => format!(" -x -a {}", fish_words(choices)),
+        Values::Collection { .. } => format!(
+            "{exclusive} -a {}",
+            fish_collection_action(values, function)
+        ),
+        Values::Text => exclusive.into(),
+        Values::Files => if arity == ValueArity::Optional {
+            " -F"
+        } else {
+            " -r -F"
+        }
+        .into(),
+        Values::Choices(choices) => format!("{exclusive} -a {}", fish_words(choices)),
     }
 }
 

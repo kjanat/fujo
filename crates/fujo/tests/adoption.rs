@@ -406,3 +406,56 @@ fn native_path_inputs_preserve_bytes_on_unix() {
         assert!(result.success(), "{:?}", result.error);
     }
 }
+
+#[test]
+fn implicit_choices_validate_regardless_of_encoder_order() {
+    for encoder_first in [false, true] {
+        let input = flag::custom("mode", |raw| Ok(raw.to_owned())).choices(["allowed"]);
+        let input = if encoder_first {
+            input
+                .encode_json(|v| serde_json::json!(v))
+                .optional_value("forbidden".into())
+        } else {
+            input
+                .optional_value("forbidden".into())
+                .encode_json(|v| serde_json::json!(v))
+        };
+        let error = CommandSchema::new("run")
+            .flag(input.into_schema())
+            .validate()
+            .unwrap_err();
+        assert_eq!(error.code, "INVALID_SCHEMA");
+    }
+}
+
+#[test]
+fn sensitive_implicit_validator_errors_are_redacted_schema_errors() {
+    let input = flag::string("token")
+        .sensitive()
+        .optional_value("fixture-secret".into())
+        .validate(|value| {
+            Err(fujo::CliError::new(
+                "INVALID_VALUE",
+                format!("Rejected {value}"),
+            ))
+        });
+    let error = CommandSchema::new("run")
+        .flag(input.into_schema())
+        .validate()
+        .unwrap_err();
+    assert_eq!(error.code, "INVALID_SCHEMA");
+    assert!(!error.message.contains("fixture-secret"), "{error:?}");
+}
+
+#[test]
+fn optional_help_shows_each_spelling_attachment_syntax() {
+    let app = Cli::new("demo").default(
+        Command::new("run").flag(
+            flag::string("colour")
+                .alias("c")
+                .optional_value("auto".into()),
+        ),
+    );
+    let help = app.execute(["--help"], RunOptions::default()).stdout;
+    assert!(help.contains("-c[<value>], --colour[=<value>]"), "{help}");
+}
