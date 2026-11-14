@@ -90,4 +90,4 @@ jobs:
         with: { persist-credentials: false }
       - uses: $/.github/actions/setup
       - uses: $/.github/actions/check-release
-      - run: cargo package --workspace --locked --all-features --registry crates-io
+      - run: python scripts/check-packages.py

@@ -397,3 +397,29 @@ fn async_native_execution_reports_invalid_utf8_before_actions() {
     ));
     assert_eq!(result.error.unwrap().code, "INVALID_UTF8");
 }
+
+#[cfg(unix)]
+#[test]
+fn async_native_paths_preserve_filename_bytes() {
+    use std::os::unix::ffi::OsStringExt;
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory
+        .path()
+        .join(std::ffi::OsString::from_vec(b"async-\xff".to_vec()));
+    std::fs::write(&path, "native async").unwrap();
+    let app = cli("demo").default(
+        command("read")
+            .inputs(fujo::arg::path("file"))
+            .action_async(async |_, file, ()| {
+                support::yield_once().await;
+                assert_eq!(std::fs::read_to_string(file).unwrap(), "native async");
+                Ok(())
+            }),
+    );
+    let result = support::run(app.run_os_with_async(
+        [path.into_os_string()],
+        RunOptions::default(),
+        &Host::default(),
+    ));
+    assert!(result.success(), "{:?}", result.error);
+}

@@ -11,7 +11,8 @@ import subprocess
 import sys
 import time
 
-script, cases = json.load(sys.stdin)
+script, cases, *options = json.load(sys.stdin)
+display = bool(options and options[0])
 functions = Path.cwd() / "functions"
 functions.mkdir(exist_ok=True)
 (functions / "_demo").write_text(script)
@@ -39,7 +40,7 @@ try:
         "PROMPT=''; RPROMPT=''; "
         f"fpath=({shlex.quote(str(functions))} $fpath); "
         "autoload -Uz compinit; compinit -D -i; "
-        "completion-test() { zle complete-word; "
+        f"completion-test() {{ zle complete-word; {'zle list-choices; zle -R;' if display else ''} "
         'print -r -- "COMPLETED=$BUFFER"; print -r -- FINISHED; zle redisplay; }; '
         "zle -N completion-test; bindkey '^I' completion-test; "
         "print -r -- READY\n"
@@ -51,6 +52,9 @@ try:
         line = " ".join(shlex.quote(word) if word else "" for word in words)
         os.write(master, b"\x15" + line.encode() + b"\t")
         output = read_until(b"\r\nFINISHED\r\n")
+        if display:
+            results.append(output)
+            continue
         matches = re.findall(r"COMPLETED=([^\r\n]*)", output)
         assert matches, output
         completed = matches[-1].rstrip(" ")
