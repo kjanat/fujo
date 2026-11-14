@@ -19,6 +19,14 @@
 //! let tags = flag::array("tags", value::string()).separator(fujo_core::delimiter!(""));
 //! ```
 //! ```compile_fail
+//! use fujo_core::schema::flag;
+//! let region = flag::enumeration("region", [] as [&str; 0]);
+//! ```
+//! ```compile_fail
+//! use fujo_core::schema::flag;
+//! let color = flag::string("color").choices([] as [&str; 0]);
+//! ```
+//! ```compile_fail
 //! use fujo_core::schema::{PathChecks, flag};
 //! let out = flag::path("out").path_checks(PathChecks::file().create());
 //! ```
@@ -72,7 +80,7 @@ impl<T> ValueParser<T> {
     {
         Self::from_input(self.flag("value").validate(validator))
     }
-    pub fn choices(self, choices: impl IntoIterator<Item = impl AsRef<str>>) -> Self {
+    pub fn choices<C: Into<String>, const N: usize>(self, choices: [C; N]) -> Self {
         Self::from_input(self.flag("value").choices(choices))
     }
     pub fn encode_json(self, encoder: impl Fn(&T) -> Value + Send + Sync + 'static) -> Self
@@ -126,7 +134,7 @@ pub fn number() -> ValueParser<f64> {
 pub fn boolean() -> ValueParser<bool> {
     ValueParser::from_input(flag::boolean("value"))
 }
-pub fn enumeration(choices: impl IntoIterator<Item = impl AsRef<str>>) -> ValueParser<String> {
+pub fn enumeration<C: Into<String>, const N: usize>(choices: [C; N]) -> ValueParser<String> {
     ValueParser::from_input(flag::enumeration("value", choices))
 }
 #[cfg(feature = "url")]

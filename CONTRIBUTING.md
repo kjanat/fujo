@@ -9,7 +9,6 @@ cargo test --workspace
 cargo test --workspace --no-default-features
 cargo test --workspace --all-features
 python3 scripts/check-features.py
-python3 scripts/check-packages.py
 cargo doc --workspace --all-features --no-deps
 ```
 
@@ -23,12 +22,6 @@ completions and terminal frame timing, feature combinations, reference behavior,
 and crate packaging. The feature checker builds nine configurations and checks
 normal dependencies across all targets, excluding development dependencies. It
 also tests the output and completion crates separately.
-
-The package checker extracts the generated archives and builds each crate using
-its packaged workspace dependencies. This verifies unpublished API changes even
-when the manifests still carry an already-published version. Temporary path
-patches and lockfile adjustments apply only to the extracted archives; release
-versioning remains part of Beepboop's preparation workflow.
 
 The reference job checks out the DreamCLI commit recorded in `reference.json`,
 installs its locked dependencies, and checks the fixture generators. The setup

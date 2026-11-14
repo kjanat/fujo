@@ -173,7 +173,13 @@ pub fn resolve(
             Surface::Arg => &parsed.arg_occurrences,
         }
         .get(&input.name);
-        match resolve_input(input, occurrences.map(Vec::as_slice), options, false) {
+        match resolve_input(
+            input,
+            occurrences.map(Vec::as_slice),
+            options,
+            false,
+            &mut resolved.skipped_checks,
+        ) {
             Ok(Some((value, source))) => {
                 record(&mut resolved, input, value, source);
             }
@@ -210,54 +216,13 @@ pub fn resolve(
         {
             input.declaration.prompt = prompt.clone();
         }
-        match resolve_input(&input, None, options, true) {
+        match resolve_input(&input, None, options, true, &mut resolved.skipped_checks) {
             Ok(Some((value, source))) => record(&mut resolved, &input, value, source),
             Ok(None) => {}
             Err(error) => {
                 if error.name == crate::error::ErrorKind::Cli {
                     return Err(error);
                 }
-                errors.push(error);
-            }
-        }
-    }
-    if errors.is_empty() {
-        let explicit = |name: &str, surface: Surface| {
-            was_explicit(match surface {
-                Surface::Flag => resolved.sources.flags.get(name),
-                Surface::Arg => resolved.sources.args.get(name),
-            })
-        };
-        for input in schema.flags.iter().chain(&schema.args) {
-            if !explicit(&input.name, input.surface) {
-                continue;
-            }
-            for target in &input.conflicts {
-                if explicit(&target.name, target.surface) {
-                    return Err(CliError::parse(
-                        "CONFLICTING_INPUTS",
-                        format!("{} conflicts with {}", input.display_name(), target.name),
-                    ));
-                }
-            }
-            for target in &input.requires {
-                if !explicit(&target.name, target.surface) {
-                    return Err(CliError::parse(
-                        "REQUIRED_INPUT",
-                        format!("{} requires {}", input.display_name(), target.name),
-                    ));
-                }
-            }
-        }
-        for input in schema.flags.iter().chain(&schema.args) {
-            let value = match input.surface {
-                Surface::Flag => resolved.flags.get(&input.name),
-                Surface::Arg => resolved.args.get(&input.name),
-            };
-            if let Some(value) = value
-                && let Err(error) =
-                    validate_native_paths(input, value, options, &mut resolved.skipped_checks)
-            {
                 errors.push(error);
             }
         }
@@ -297,16 +262,12 @@ fn record(
         }
     }
 }
-enum SelectedValue {
-    Json(Value),
-    Native(NativeValue),
-}
-
 fn resolve_input(
     input: &InputSchema,
     occurrences: Option<&[Occurrence]>,
     options: &ResolveOptions,
     later: bool,
+    skipped: &mut Vec<SkippedCheck>,
 ) -> Result<Option<(NativeValue, Provenance)>> {
     let mut selected = None;
     if let Some(occurrences) = occurrences {
@@ -333,40 +294,7 @@ fn resolve_input(
             source.trigger = Some("dash".into());
         }
         if !expanded.is_empty() || input.collection() {
-            if expanded.iter().any(|o| matches!(o, Occurrence::Path(_))) {
-                let mut paths = vec![];
-                for value in &expanded {
-                    let path = match value {
-                        Occurrence::Path(path) => path.clone(),
-                        Occurrence::Value(value) => {
-                            PathBuf::from(value.as_str().ok_or_else(|| {
-                                CliError::parse("INVALID_VALUE", "Expected a path")
-                            })?)
-                        }
-                        _ => return Err(CliError::parse("INVALID_VALUE", "Expected a path")),
-                    };
-                    if !input.unique || !paths.contains(&path) {
-                        paths.push(path);
-                    }
-                }
-                let native = if input.collection() {
-                    NativeValue::new(paths)
-                } else {
-                    NativeValue::new(paths.pop().expect("path occurrence"))
-                };
-                selected = Some((SelectedValue::Native(native), source));
-            } else if expanded.last() == Some(&Occurrence::MissingValue) {
-                let value = input
-                    .missing_value
-                    .clone()
-                    .ok_or_else(|| CliError::new("INVALID_SCHEMA", "Missing implicit value"))?;
-                selected = Some((SelectedValue::Native(value), source));
-            } else {
-                selected = Some((
-                    SelectedValue::Json(project(input, &expanded, Stage::Cli)?),
-                    source,
-                ));
-            }
+            selected = Some((project(input, &expanded, Stage::Cli)?, source));
         }
     }
     if selected.is_none()
@@ -379,11 +307,7 @@ fn resolve_input(
             ..Provenance::at(Stage::Stdin)
         };
         selected = Some((
-            SelectedValue::Json(project(
-                input,
-                &stdin_occurrences(input, buffer)?,
-                Stage::Stdin,
-            )?),
+            project(input, &stdin_occurrences(input, buffer)?, Stage::Stdin)?,
             source,
         ));
     }
@@ -391,7 +315,7 @@ fn resolve_input(
         for env in &input.env_vars {
             if let Some(value) = options.env.get(env) {
                 selected = Some((
-                    SelectedValue::Json(coerce(input, json!(value), &input.env_split, Stage::Env)?),
+                    coerce(input, json!(value), &input.env_split, Stage::Env)?,
                     Provenance {
                         env_var: Some(env.clone()),
                         ..Provenance::at(Stage::Env)
@@ -406,12 +330,7 @@ fn resolve_input(
         && let Some(value) = config_value(&options.config, path).filter(|v| !v.is_null())
     {
         selected = Some((
-            SelectedValue::Json(coerce(
-                input,
-                value.clone(),
-                &input.env_split,
-                Stage::Config,
-            )?),
+            coerce(input, value.clone(), &input.env_split, Stage::Config)?,
             Provenance {
                 config_path: Some(path.clone()),
                 ..Provenance::at(Stage::Config)
@@ -469,27 +388,37 @@ fn resolve_input(
         };
         if let Some(value) = answer {
             selected = Some((
-                SelectedValue::Json(coerce(input, value, &input.env_split, Stage::Prompt)?),
+                coerce(input, value, &input.env_split, Stage::Prompt)?,
                 Provenance::at(Stage::Prompt),
             ));
         }
     }
     let (native, source) = if let Some((value, source)) = selected {
-        let mut native = match value {
-            SelectedValue::Native(native) => native,
-            SelectedValue::Json(value) => input
-                .native_decoder
-                .as_ref()
-                .ok_or_else(|| CliError::new("INVALID_SCHEMA", "Missing native codec"))?(
-                &value
-            )
-            .map_err(|e| input.failure(&e.code, &e.message, source.stage == Stage::Cli))?,
-        };
+        validate_paths(input, &value, options, skipped)?;
+        let mut native = input
+            .native_decoder
+            .as_ref()
+            .ok_or_else(|| CliError::new("INVALID_SCHEMA", "Missing native codec"))?(
+            &value
+        )
+        .map_err(|e| input.failure(&e.code, &e.message, source.stage == Stage::Cli))?;
         if let Some(encode) = &input.encoder {
             native.json = encode(&native);
         }
         (native, source)
     } else if let Some(default) = &input.native_default {
+        if let Some(path) = default.inner.downcast_ref::<PathBuf>() {
+            validate_path_values(input, &[path.as_path()], options, skipped)?;
+        } else if let Some(paths) = default.inner.downcast_ref::<Vec<PathBuf>>() {
+            validate_path_values(
+                input,
+                &paths.iter().map(PathBuf::as_path).collect::<Vec<_>>(),
+                options,
+                skipped,
+            )?;
+        } else if let Some(value) = input.default_validation_json(default) {
+            validate_paths(input, &value, options, skipped)?;
+        }
         (default.clone(), Provenance::at(Stage::Default))
     } else if input.required {
         return Err(CliError::validation(
@@ -647,35 +576,6 @@ fn collection_text(
         .into_iter()
         .map(|v| decode_element(input, v, source).map(Occurrence::Value))
         .collect()
-}
-
-fn validate_native_paths(
-    input: &InputSchema,
-    value: &NativeValue,
-    options: &ResolveOptions,
-    skipped: &mut Vec<SkippedCheck>,
-) -> Result<()> {
-    if let Some(path) = value.inner.downcast_ref::<PathBuf>() {
-        validate_path_values(input, &[path.as_path()], options, skipped)
-    } else if let Some(paths) = value.inner.downcast_ref::<Vec<PathBuf>>() {
-        validate_path_values(
-            input,
-            &paths.iter().map(PathBuf::as_path).collect::<Vec<_>>(),
-            options,
-            skipped,
-        )
-    } else if let Some(paths) = value.inner.downcast_ref::<BTreeMap<String, PathBuf>>() {
-        validate_path_values(
-            input,
-            &paths.values().map(PathBuf::as_path).collect::<Vec<_>>(),
-            options,
-            skipped,
-        )
-    } else if let Some(json) = input.default_validation_json(value) {
-        validate_paths(input, &json, options, skipped)
-    } else {
-        Ok(())
-    }
 }
 
 fn validate_paths(

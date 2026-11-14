@@ -5,99 +5,55 @@ use crate::resolve::Stage;
 use crate::schema::DuplicatePolicy;
 use crate::schema::InputSchema;
 use crate::schema::Kind;
-use crate::schema::ValueArity;
 use serde::Serialize;
 use serde_json::Value;
 use serde_json::json;
 use std::collections::BTreeMap;
 
-use std::ffi::{OsStr, OsString};
-
-/// Remove a Unicode prefix without decoding the remaining OS string.
-pub fn os_strip_prefix(raw: &OsStr, prefix: &str) -> Option<OsString> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::ffi::{OsStrExt, OsStringExt};
-        raw.as_bytes()
-            .strip_prefix(prefix.as_bytes())
-            .map(|tail| OsString::from_vec(tail.to_vec()))
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::ffi::{OsStrExt, OsStringExt};
-        let raw: Vec<_> = raw.encode_wide().collect();
-        let prefix: Vec<_> = prefix.encode_utf16().collect();
-        raw.strip_prefix(prefix.as_slice()).map(OsString::from_wide)
-    }
-    #[cfg(not(any(unix, windows)))]
-    {
-        raw.to_str()?.strip_prefix(prefix).map(OsString::from)
-    }
-}
-fn text(raw: &OsStr) -> Result<&str> {
-    raw.to_str()
-        .ok_or_else(|| CliError::parse("INVALID_UTF8", "Text arguments must be valid UTF-8"))
-}
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum Token {
-    LongFlag {
-        name: String,
-        value: Option<OsString>,
-    },
-    ShortFlags(OsString),
-    Positional(OsString),
+pub(crate) enum Token {
+    LongFlag { name: String, value: Option<String> },
+    ShortFlags(String),
+    Positional(String),
     Separator,
 }
-fn tokenize(argv: &[OsString]) -> Result<Vec<Token>> {
+pub(crate) fn tokenize(argv: &[String]) -> Vec<Token> {
     let mut past = false;
     argv.iter()
         .map(|raw| {
-            Ok(if past {
+            if past {
                 Token::Positional(raw.clone())
             } else if raw == "--" {
                 past = true;
                 Token::Separator
-            } else if raw.as_encoded_bytes().starts_with(b"--") {
-                let raw = os_strip_prefix(raw, "--").expect("long flag");
-                let (name, value) = if let Some(index) =
-                    raw.as_encoded_bytes().iter().position(|&b| b == b'=')
-                {
-                    let name =
-                        std::str::from_utf8(&raw.as_encoded_bytes()[..index]).map_err(|_| {
-                            CliError::parse("INVALID_UTF8", "Flag names must be valid UTF-8")
-                        })?;
-                    (
-                        OsStr::new(name),
-                        Some(os_strip_prefix(&raw, &format!("{name}=")).expect("equals prefix")),
-                    )
-                } else {
-                    (raw.as_os_str(), None)
-                };
+            } else if let Some(raw) = raw.strip_prefix("--") {
+                let (name, value) = raw
+                    .split_once('=')
+                    .map(|(n, v)| (n, Some(v.to_string())))
+                    .unwrap_or((raw, None));
                 Token::LongFlag {
-                    name: text(name)?.into(),
+                    name: name.into(),
                     value,
                 }
-            } else if raw.as_encoded_bytes().starts_with(b"-") && raw != "-" {
-                Token::ShortFlags(os_strip_prefix(raw, "-").expect("short flag"))
+            } else if raw.starts_with('-') && raw != "-" {
+                Token::ShortFlags(raw[1..].into())
             } else {
                 Token::Positional(raw.clone())
-            })
+            }
         })
         .collect()
 }
-pub fn includes_before_separator<T: AsRef<OsStr>>(argv: &[T], token: &str) -> bool {
-    argv.iter()
-        .take_while(|s| s.as_ref() != "--")
-        .any(|s| s.as_ref() == token)
+pub fn includes_before_separator(argv: &[String], token: &str) -> bool {
+    argv.iter().take_while(|s| *s != "--").any(|s| s == token)
 }
-pub fn strip_before_separator<T: AsRef<OsStr> + Clone>(argv: &[T], token: &str) -> Vec<T> {
+pub fn strip_before_separator(argv: &[String], token: &str) -> Vec<String> {
     let mut past = false;
     argv.iter()
         .filter_map(|s| {
-            if s.as_ref() == "--" {
+            if s == "--" {
                 past = true;
             }
-            if !past && s.as_ref() == token {
+            if !past && s == token {
                 None
             } else {
                 Some(s.clone())
@@ -121,8 +77,6 @@ pub enum Occurrence {
     Value(Value),
     Stdin,
     Increment,
-    MissingValue,
-    Path(std::path::PathBuf),
 }
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct Parsed {
@@ -144,9 +98,6 @@ pub(crate) fn kebab(name: &str) -> String {
     output
 }
 fn counterpart(name: &str) -> Option<String> {
-    if name.chars().count() < 2 {
-        return None;
-    }
     let other = if name.contains('-') {
         let mut s = String::new();
         let mut upper = false;
@@ -218,19 +169,7 @@ pub fn canonical_flag_name_with(
 }
 
 pub fn parse(schema: &CommandSchema, argv: &[String], options: ParseOptions) -> Result<Parsed> {
-    parse_os(
-        schema,
-        &argv.iter().map(OsString::from).collect::<Vec<_>>(),
-        options,
-    )
-}
-
-pub fn parse_os(
-    schema: &CommandSchema,
-    argv: &[OsString],
-    options: ParseOptions,
-) -> Result<Parsed> {
-    let tokens = tokenize(argv)?;
+    let tokens = tokenize(argv);
     let lookup = flag_lookup(&schema.flags, options);
     let mut parsed = Parsed::default();
     let mut positionals = vec![];
@@ -257,11 +196,9 @@ pub fn parse_os(
                         ));
                     }
                     vec![Occurrence::Value(json!(false))]
-                } else if flag.value_arity == ValueArity::Optional && value.is_none() {
-                    vec![Occurrence::MissingValue]
                 } else if !flag.expects_value() {
                     if let Some(value) = value {
-                        decode_os_token(flag, value)?
+                        decode_token(flag, value)?
                     } else if flag.kind == Kind::Count {
                         vec![Occurrence::Increment]
                     } else {
@@ -277,22 +214,13 @@ pub fn parse_os(
                             _ => return Err(missing(flag)),
                         }
                     };
-                    decode_os_token(flag, value)?
+                    decode_token(flag, value)?
                 };
                 record(&mut parsed.flag_occurrences, flag, occurrences)?;
                 i += 1;
             }
             Token::ShortFlags(chars) => {
-                let valid = chars.to_str().unwrap_or_else(|| {
-                    let end = std::str::from_utf8(chars.as_encoded_bytes())
-                        .unwrap_err()
-                        .valid_up_to();
-                    std::str::from_utf8(&chars.as_encoded_bytes()[..end]).expect("valid prefix")
-                });
-                if valid.is_empty() {
-                    text(chars)?;
-                }
-                for (offset, c) in valid.char_indices() {
+                for (offset, c) in chars.char_indices() {
                     let (flag, negated) = lookup
                         .get(&c.to_string())
                         .copied()
@@ -306,17 +234,9 @@ pub fn parse_os(
                             vec![Occurrence::Value(json!(true))]
                         }
                     } else {
-                        let tail = os_strip_prefix(chars, &valid[..offset + c.len_utf8()])
-                            .expect("short prefix");
+                        let tail = &chars[offset + c.len_utf8()..];
                         let value = if !tail.is_empty() {
-                            &tail
-                        } else if flag.value_arity == ValueArity::Optional {
-                            record(
-                                &mut parsed.flag_occurrences,
-                                flag,
-                                vec![Occurrence::MissingValue],
-                            )?;
-                            break;
+                            tail
                         } else {
                             i += 1;
                             match tokens.get(i) {
@@ -324,14 +244,11 @@ pub fn parse_os(
                                 _ => return Err(missing(flag)),
                             }
                         };
-                        let values = decode_os_token(flag, value)?;
+                        let values = decode_token(flag, value)?;
                         record(&mut parsed.flag_occurrences, flag, values)?;
                         break;
                     };
                     record(&mut parsed.flag_occurrences, flag, occurrences)?;
-                    if offset + c.len_utf8() == valid.len() && chars.to_str().is_none() {
-                        text(chars)?;
-                    }
                 }
                 i += 1;
             }
@@ -342,11 +259,11 @@ pub fn parse_os(
         let mut occurrences = vec![];
         if arg.variadic {
             for raw in &positionals[cursor..] {
-                occurrences.extend(decode_os_token(arg, raw)?);
+                occurrences.extend(decode_token(arg, raw)?);
             }
             cursor = positionals.len();
         } else if let Some(raw) = positionals.get(cursor) {
-            occurrences.extend(decode_os_token(arg, raw)?);
+            occurrences.extend(decode_token(arg, raw)?);
             cursor += 1;
         }
         if !occurrences.is_empty() {
@@ -387,26 +304,6 @@ fn record(
     }
     entry.extend(occurrences);
     Ok(())
-}
-fn decode_os_token(schema: &InputSchema, raw: &OsStr) -> Result<Vec<Occurrence>> {
-    if let Some(raw) = raw.to_str() {
-        return decode_token(schema, raw);
-    }
-    let element = schema.element.as_deref().unwrap_or(schema);
-    if element.kind == Kind::Path && schema.kind != Kind::KeyValue {
-        if schema.collection() && schema.cli_split != crate::schema::Split::Whole {
-            return Err(CliError::parse(
-                "INVALID_UTF8",
-                "Splitting a path value requires valid UTF-8",
-            ));
-        }
-        Ok(vec![Occurrence::Path(raw.into())])
-    } else {
-        Err(CliError::parse(
-            "INVALID_UTF8",
-            format!("{} requires valid UTF-8", schema.display_name()),
-        ))
-    }
 }
 pub(crate) fn decode_token(schema: &InputSchema, raw: &str) -> Result<Vec<Occurrence>> {
     if raw == "-" && schema.stdin.is_some_and(|s| s.reads_dash()) {
@@ -461,7 +358,7 @@ pub(crate) fn project(
         .filter_map(|o| match o {
             Occurrence::Value(v) => Some(v.clone()),
             Occurrence::Stdin => Some(json!("-")),
-            Occurrence::Increment | Occurrence::MissingValue | Occurrence::Path(_) => None,
+            Occurrence::Increment => None,
         })
         .collect();
     if schema.kind == Kind::Count {

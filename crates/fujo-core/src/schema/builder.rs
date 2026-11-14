@@ -81,11 +81,9 @@ pub struct Input<T, P = Optional, S = FlagMarker> {
     marker: PhantomData<InputType<T, P, S>>,
 }
 type InputType<T, P, S> = fn() -> (T, P, S);
-pub(super) fn choice_list(choices: impl IntoIterator<Item = impl AsRef<str>>) -> Vec<String> {
-    choices
-        .into_iter()
-        .map(|choice| choice.as_ref().to_owned())
-        .collect()
+pub(super) fn choice_list<C: Into<String>, const N: usize>(choices: [C; N]) -> Vec<String> {
+    const { assert!(N > 0, "A choice list needs at least one choice") };
+    choices.into_iter().map(Into::into).collect()
 }
 impl<T, P, S> Clone for Input<T, P, S> {
     fn clone(&self) -> Self {
@@ -119,20 +117,6 @@ impl<T, P, S> Input<T, P, S> {
     }
     pub fn into_schema(self) -> InputSchema {
         self.schema
-    }
-    pub fn conflicts_with<U, Q, R>(mut self, other: &Input<U, Q, R>) -> Self {
-        self.schema_mut().declaration.conflicts.push(InputRef {
-            name: other.name().into(),
-            surface: other.schema.surface,
-        });
-        self
-    }
-    pub fn requires<U, Q, R>(mut self, other: &Input<U, Q, R>) -> Self {
-        self.schema_mut().declaration.requires.push(InputRef {
-            name: other.name().into(),
-            surface: other.schema.surface,
-        });
-        self
     }
     pub fn name(&self) -> &str {
         &self.schema.name
@@ -204,13 +188,12 @@ impl<T, P, S> Input<T, P, S> {
     pub fn hide_default(self) -> Self {
         self.default_description(DefaultDescription::Hidden)
     }
-    pub fn choices(mut self, choices: impl IntoIterator<Item = impl AsRef<str>>) -> Self {
+    pub fn choices<C: Into<String>, const N: usize>(mut self, choices: [C; N]) -> Self {
         let schema = self.schema_mut();
         if schema.kind == Kind::String {
             schema.declaration.kind = Kind::Enum;
         }
         schema.declaration.enum_values = choice_list(choices);
-        schema.declaration.choices_declared = true;
         self
     }
 
@@ -273,18 +256,6 @@ impl<T, P> Input<T, P, FlagMarker> {
     }
     pub fn propagate(mut self) -> Self {
         self.schema_mut().declaration.propagate = true;
-        self
-    }
-}
-
-impl<T: Send + Sync + 'static, P> Input<T, P, FlagMarker> {
-    /// Accept an attached value; use `implicit` when the flag appears alone.
-    pub fn optional_value(mut self, implicit: T) -> Self {
-        let schema = self.schema_mut();
-        schema.declaration.value_arity = ValueArity::Optional;
-        let mut value = NativeValue::new(implicit);
-        value.json = schema.encoder.as_ref().and_then(|encode| encode(&value));
-        schema.missing_value = Some(value);
         self
     }
 }
@@ -357,8 +328,6 @@ impl<T, P> Input<T, P, ArgMarker> {
         schema.declaration.surface = Surface::Arg;
         let original = original.declaration;
         schema.declaration.required = original.required;
-        schema.declaration.conflicts = original.conflicts;
-        schema.declaration.requires = original.requires;
         schema.declaration.description = original.description;
         schema.declaration.env_vars = original.env_vars;
         schema.declaration.config_path = original.config_path;
@@ -469,13 +438,12 @@ pub mod flag {
         )))
         .default(0)
     }
-    pub fn enumeration(
+    pub fn enumeration<C: Into<String>, const N: usize>(
         name: &str,
-        choices: impl IntoIterator<Item = impl AsRef<str>>,
+        choices: [C; N],
     ) -> Input<String> {
         let mut schema = InputSchema::new(name, Kind::Enum, Surface::Flag);
         schema.declaration.enum_values = choice_list(choices);
-        schema.declaration.choices_declared = true;
         Input::from_schema(typed_schema::<String>(schema))
     }
     pub fn array<T: Clone + Send + Sync + 'static>(
@@ -622,9 +590,9 @@ pub mod arg {
     pub fn boolean(name: &str) -> Input<bool, Required, ArgMarker> {
         positional(flag::boolean(name))
     }
-    pub fn enumeration(
+    pub fn enumeration<C: Into<String>, const N: usize>(
         name: &str,
-        choices: impl IntoIterator<Item = impl AsRef<str>>,
+        choices: [C; N],
     ) -> Input<String, Required, ArgMarker> {
         positional(flag::enumeration(name, choices))
     }

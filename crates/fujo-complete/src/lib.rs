@@ -9,7 +9,6 @@ use fujo_core::parse::ParseOptions;
 use fujo_core::schema::InputSchema;
 use fujo_core::schema::Kind;
 use fujo_core::schema::Split;
-use fujo_core::schema::ValueArity;
 use std::fmt::Write;
 use std::path::Path;
 use std::str::FromStr;
@@ -95,7 +94,7 @@ struct Node {
     path: String,
     flags: Vec<InputSchema>,
     args: Vec<InputSchema>,
-    children: Vec<(String, String, String)>,
+    children: Vec<(String, String)>,
 }
 impl Node {
     fn visible_flags(&self) -> impl Iterator<Item = &InputSchema> {
@@ -105,8 +104,9 @@ impl Node {
         fujo_core::parse::flag_lookup(&self.flags, options)
     }
     fn forms(&self, lookup: &Lookup<'_>, flag: &InputSchema) -> Vec<String> {
-        std::iter::once(fujo_core::parse::spelling(
-            &fujo_core::parse::canonical_flag_name_with(lookup, flag),
+        std::iter::once(format!(
+            "--{}",
+            fujo_core::parse::canonical_flag_name_with(lookup, flag)
         ))
         .chain(
             flag.aliases
@@ -123,7 +123,8 @@ impl Node {
             .iter()
             .filter(|(_, (flag, negated))| flag.expects_value() && !negated)
             .flat_map(|(name, (flag, _))| {
-                std::iter::once(fujo_core::parse::spelling(name))
+                std::iter::once(format!("--{name}"))
+                    .chain((name.chars().count() == 1).then(|| format!("-{name}")))
                     .map(move |form| (Values::of(flag), form))
             })
             .collect();
@@ -136,50 +137,18 @@ impl Node {
         }));
         forms
     }
-    fn required_forms(
-        &self,
-        globals: &[GlobalFlag],
-        options: ParseOptions,
-    ) -> Vec<(Values, String)> {
-        let lookup = self.lookup(options);
-        self.value_forms(globals, options)
-            .into_iter()
-            .filter(|(_, form)| {
-                lookup
-                    .get(form.trim_start_matches('-'))
-                    .is_none_or(|(flag, _)| flag.value_arity == ValueArity::Required)
-            })
-            .collect()
-    }
-    fn short_forms(
-        &self,
-        globals: &[GlobalFlag],
-        options: ParseOptions,
-    ) -> Vec<(String, ValueArity)> {
+    fn short_forms(&self, globals: &[GlobalFlag], options: ParseOptions) -> Vec<(String, bool)> {
         let mut forms: Vec<_> = self
             .lookup(options)
             .into_iter()
             .filter(|(name, _)| name.chars().count() == 1)
-            .map(|(name, (flag, negated))| {
-                (
-                    name,
-                    if negated {
-                        ValueArity::None
-                    } else {
-                        flag.value_arity
-                    },
-                )
-            })
+            .map(|(name, (flag, negated))| (name, flag.expects_value() && !negated))
             .collect();
         forms.extend(globals.iter().filter_map(|global| {
             global.short.map(|name| {
                 (
                     name.trim_start_matches('-').to_owned(),
-                    if global.value.is_some() {
-                        ValueArity::Required
-                    } else {
-                        ValueArity::None
-                    },
+                    global.value.is_some(),
                 )
             })
         }));
@@ -201,7 +170,7 @@ impl Node {
         format!("{}:{form}", self.path)
     }
     fn child_paths(&self) -> impl Iterator<Item = (&str, String)> {
-        self.children.iter().map(|(name, canonical, _)| {
+        self.children.iter().map(|(name, canonical)| {
             let path = if self.path.is_empty() {
                 canonical.clone()
             } else {
@@ -210,32 +179,11 @@ impl Node {
             (name.as_str(), path)
         })
     }
-    fn descriptions(
-        &self,
-        globals: &[GlobalFlag],
-        options: ParseOptions,
-    ) -> Vec<(String, String, bool)> {
-        let lookup = self.lookup(options);
-        self.children
-            .iter()
-            .map(|(name, _, description)| (name.clone(), description.clone(), true))
-            .chain(self.visible_flags().flat_map(|flag| {
-                self.forms(&lookup, flag)
-                    .into_iter()
-                    .map(move |form| (form, flag.description.clone(), false))
-            }))
-            .chain(globals.iter().flat_map(|global| {
-                std::iter::once(global.long)
-                    .chain(global.short)
-                    .map(move |form| (form.into(), global.description.into(), false))
-            }))
-            .collect()
-    }
     fn candidates(&self, globals: &[GlobalFlag], options: ParseOptions) -> Vec<String> {
         let lookup = self.lookup(options);
         self.children
             .iter()
-            .map(|(name, _, _)| name.clone())
+            .map(|(name, _)| name.clone())
             .chain(
                 self.visible_flags()
                     .flat_map(|flag| self.forms(&lookup, flag)),
@@ -292,11 +240,9 @@ fn nodes(program: &ProgramSchema) -> Vec<Node> {
         children: children(&program.commands),
     }];
     if program.completions {
-        nodes[0].children.push((
-            "completions".into(),
-            "completions".into(),
-            "Generate shell completions".into(),
-        ));
+        nodes[0]
+            .children
+            .push(("completions".into(), "completions".into()));
     }
     let inherited: Vec<_> = program
         .flags
@@ -310,19 +256,19 @@ fn nodes(program: &ProgramSchema) -> Vec<Node> {
             path: "completions".into(),
             flags: vec![],
             args: vec![],
-            children: SHELLS.map(|s| (s.into(), s.into(), String::new())).to_vec(),
+            children: SHELLS.map(|s| (s.into(), s.into())).to_vec(),
         });
     }
     nodes
 }
-fn children(commands: &[CommandSchema]) -> Vec<(String, String, String)> {
+fn children(commands: &[CommandSchema]) -> Vec<(String, String)> {
     commands
         .iter()
         .filter(|c| !c.hidden)
         .flat_map(|c| {
             std::iter::once(&c.name)
                 .chain(&c.aliases)
-                .map(move |name| (name.clone(), c.name.clone(), c.description.clone()))
+                .map(move |name| (name.clone(), c.name.clone()))
         })
         .collect()
 }
@@ -388,9 +334,8 @@ pub fn generate_with_options(
         Shell::PowerShell => powershell(program, &nodes, &globals, options),
     };
     let tag = program
-        .completion_version
+        .version
         .as_ref()
-        .or(program.version.as_ref())
         .map(|v| format!("{} v{v}", program.name))
         .unwrap_or_else(|| program.name.clone())
         .replace(['\n', '\r'], " ");
@@ -405,14 +350,14 @@ pub fn generate_with_options(
 
 fn posix_short(nodes: &[Node], globals: &[GlobalFlag], options: ParseOptions) -> String {
     let mut script = String::from(
-        "    short_flag=''; short_tail=''; short_prefix=''; short_required=0\n    if [[ $token == -?* && $token != --* ]]; then\n      short_tail=\"${token#-}\"; short_prefix='-'\n      while [[ -n $short_tail ]]; do\n        short_char=\"${short_tail%\"${short_tail#?}\"}\"; short_tail=\"${short_tail#?}\"; short_prefix+=\"$short_char\"\n        case \"$path:$short_char\" in\n",
+        "    short_flag=''; short_tail=''; short_prefix=''\n    if [[ $token == -?* && $token != --* ]]; then\n      short_tail=\"${token#-}\"; short_prefix='-'\n      while [[ -n $short_tail ]]; do\n        short_char=\"${short_tail%\"${short_tail#?}\"}\"; short_tail=\"${short_tail#?}\"; short_prefix+=\"$short_char\"\n        case \"$path:$short_char\" in\n",
     );
     for node in nodes {
         for (name, value) in node.short_forms(globals, options) {
-            let action = match value {
-                ValueArity::Required => "short_flag=\"-$short_char\"; short_required=1; break",
-                ValueArity::Optional => "short_flag=\"-$short_char\"; break",
-                ValueArity::None => ":",
+            let action = if value {
+                "short_flag=\"-$short_char\"; break"
+            } else {
+                ":"
             };
             let _ = writeln!(
                 script,
@@ -483,19 +428,19 @@ fn posix(
     let bash = shell == Shell::Bash;
     let mut script = if bash {
         format!(
-            "{function}() {{\n  local cur prev path='' token i skip=0 pos=0 literal=0 files=0 cword\n  local pending='' short_flag short_tail short_prefix short_char short_required delimiter\n  local -a words candidates=() extra=()\n  if type _comp_get_words &>/dev/null; then\n    _comp_get_words -n =: cur prev words cword\n  elif type _get_comp_words_by_ref &>/dev/null; then\n    _get_comp_words_by_ref -n =: cur prev words cword\n  else\n    words=(); cword=0\n    for ((i=0; i<${{#COMP_WORDS[@]}}; i++)); do\n      if (( i > 0 )) && [[ ${{COMP_WORDS[i]}} == =* || ${{COMP_WORDS[i]}} == :* || ${{COMP_WORDS[i-1]}} == *= || ${{COMP_WORDS[i-1]}} == *: ]]; then\n        words[${{#words[@]}}-1]+=${{COMP_WORDS[i]}}\n      else\n        words+=(\"${{COMP_WORDS[i]}}\")\n      fi\n      (( i == COMP_CWORD )) && cword=$((${{#words[@]}}-1))\n    done\n    cur=${{words[cword]}} prev=${{words[cword-1]}}\n  fi\n  for ((i=1; i<cword; i++)); do\n"
+            "{function}() {{\n  local cur prev path='' token i skip=0 pos=0 literal=0 files=0 cword\n  local pending='' short_flag short_tail short_prefix short_char delimiter\n  local -a words candidates=() extra=()\n  if type _comp_get_words &>/dev/null; then\n    _comp_get_words -n =: cur prev words cword\n  elif type _get_comp_words_by_ref &>/dev/null; then\n    _get_comp_words_by_ref -n =: cur prev words cword\n  else\n    words=(); cword=0\n    for ((i=0; i<${{#COMP_WORDS[@]}}; i++)); do\n      if (( i > 0 )) && [[ ${{COMP_WORDS[i]}} == =* || ${{COMP_WORDS[i]}} == :* || ${{COMP_WORDS[i-1]}} == *= || ${{COMP_WORDS[i-1]}} == *: ]]; then\n        words[${{#words[@]}}-1]+=${{COMP_WORDS[i]}}\n      else\n        words+=(\"${{COMP_WORDS[i]}}\")\n      fi\n      (( i == COMP_CWORD )) && cword=$((${{#words[@]}}-1))\n    done\n    cur=${{words[cword]}} prev=${{words[cword-1]}}\n  fi\n  for ((i=1; i<cword; i++)); do\n"
         )
     } else {
         format!(
-            "#compdef {}\n{function}() {{\n  local cur=\"$words[CURRENT]\" prev=\"$words[CURRENT-1]\" path='' token i skip=0 pos=0 literal=0 files=0\n  local pending='' short_flag short_tail short_prefix short_char short_required delimiter\n  local -a candidates extra descriptions\n  for ((i=2; i<CURRENT; i++)); do\n",
+            "#compdef {}\n{function}() {{\n  local cur=\"$words[CURRENT]\" prev=\"$words[CURRENT-1]\" path='' token i skip=0 pos=0 literal=0 files=0\n  local pending='' short_flag short_tail short_prefix short_char delimiter\n  local -a candidates extra\n  for ((i=2; i<CURRENT; i++)); do\n",
             program.name
         )
     };
     script.push_str("    token=\"${words[i]}\"\n    (( skip )) && { skip=0; pending=''; continue; }\n    (( literal )) && { pos=$((pos+1)); continue; }\n    [[ $token == -- ]] && { literal=1; continue; }\n" );
     script.push_str(&posix_short(nodes, globals, options));
-    script.push_str("    if [[ -n $short_flag ]]; then [[ -z $short_tail && $short_required == 1 ]] && { skip=1; pending=\"$short_flag\"; }; continue; fi\n    case \"$path:$token\" in\n");
+    script.push_str("    if [[ -n $short_flag ]]; then [[ -z $short_tail ]] && { skip=1; pending=\"$short_flag\"; }; continue; fi\n    case \"$path:$token\" in\n");
     for node in nodes {
-        for (_, form) in node.required_forms(globals, options) {
+        for (_, form) in node.value_forms(globals, options) {
             let _ = writeln!(
                 script,
                 "      {}) skip=1; pending=\"$token\"; continue ;;",
@@ -555,25 +500,9 @@ fn posix(
     }
     script.push_str("  fi\n  if (( ! literal )); then\n  case \"$path\" in\n");
     for node in nodes {
-        let display = if bash {
-            String::new()
-        } else {
-            let descriptions = node
-                .descriptions(globals, options)
-                .into_iter()
-                .map(|(name, description, _)| {
-                    if description.is_empty() {
-                        name
-                    } else {
-                        format!("{name} -- {description}")
-                    }
-                })
-                .collect::<Vec<_>>();
-            format!("; descriptions=({})", words(&descriptions))
-        };
         let _ = writeln!(
             script,
-            "    {}) candidates=({}){display} ;;",
+            "    {}) candidates=({}) ;;",
             quote(&node.path),
             words(&node.candidates(globals, options))
         );
@@ -584,7 +513,7 @@ fn posix(
         let _ = writeln!(script, "complete -F {function} -- {}", quote(&program.name));
     } else {
         script.push_str(
-            "  descriptions+=(\"${extra[@]}\")\n  compadd -d descriptions -- \"${candidates[@]}\"\n  (( files )) && _files\n  return 0\n}\n",
+            "  compadd -- \"${candidates[@]}\"\n  (( files )) && _files\n  return 0\n}\n",
         );
         let _ = writeln!(
             script,
@@ -607,12 +536,9 @@ fn fish_short(
     for node in nodes {
         for (name, value) in node.short_forms(globals, options) {
             let _ = writeln!(script, "      case {}", fish_quote(&node.keyed(&name)));
-            if value != ValueArity::None {
-                script.push_str("        printf '%s\\n' \"-$char\" \"$tail\" \"$prefix\"\n");
-                let _ = writeln!(
-                    script,
-                    "        echo {}\n        return",
-                    u8::from(value == ValueArity::Required)
+            if value {
+                script.push_str(
+                    "        printf '%s\\n' \"-$char\" \"$tail\" \"$prefix\"\n        return\n",
                 );
             }
         }
@@ -632,7 +558,7 @@ fn fish_collection(function: &str) -> String {
       set value_cur (string replace -r '^--[^=]+=' '' -- "$value_cur")
     else
       set -l short ({function}_short "$state[3]" "$value_cur")
-      if test (count $short) -ge 3
+      if test (count $short) -eq 3
         set value_cur "$short[2]"
       end
     end
@@ -702,10 +628,10 @@ fn fish(
     options: ParseOptions,
 ) -> String {
     let mut script = format!(
-        "function {function}_state\n  set -l tokens (commandline -opc)\n  set -e tokens[1]\n  set -l path ''\n  set -l skip 0\n  set -l pending ''\n  set -l pos 0\n  set -l literal 0\n  for token in $tokens\n    if test $skip -eq 1\n      set skip 0\n      set pending ''\n      continue\n    end\n    if test $literal -eq 1\n      set pos (math $pos + 1)\n      continue\n    end\n    if test \"$token\" = --\n      set literal 1\n      continue\n    end\n    set -l short ({function}_short \"$path\" \"$token\")\n    if test (count $short) -eq 4\n      if test -z \"$short[2]\"; and test \"$short[4]\" = 1\n        set skip 1\n        set pending \"$short[1]\"\n      end\n      continue\n    end\n    switch \"$path:$token\"\n"
+        "function {function}_state\n  set -l tokens (commandline -opc)\n  set -e tokens[1]\n  set -l path ''\n  set -l skip 0\n  set -l pending ''\n  set -l pos 0\n  set -l literal 0\n  for token in $tokens\n    if test $skip -eq 1\n      set skip 0\n      set pending ''\n      continue\n    end\n    if test $literal -eq 1\n      set pos (math $pos + 1)\n      continue\n    end\n    if test \"$token\" = --\n      set literal 1\n      continue\n    end\n    set -l short ({function}_short \"$path\" \"$token\")\n    if test (count $short) -eq 3\n      if test -z \"$short[2]\"\n        set skip 1\n        set pending \"$short[1]\"\n      end\n      continue\n    end\n    switch \"$path:$token\"\n"
     );
     for node in nodes {
-        for (_, form) in node.required_forms(globals, options) {
+        for (_, form) in node.value_forms(globals, options) {
             let _ = writeln!(
                 script,
                 "      case {}\n        set skip 1\n        set pending $token\n        continue",
@@ -740,12 +666,11 @@ fn fish(
             "complete -c {program_name} -n {} -f",
             quote(&format!("{function}_in{suffix}"))
         );
-        for (name, _, description) in &node.children {
+        for (name, _) in &node.children {
             let _ = writeln!(
                 script,
-                "complete -c {program_name} -f -n {condition} -a {} -d {}",
-                quote(name),
-                quote(description)
+                "complete -c {program_name} -f -n {condition} -a {}",
+                quote(name)
             );
         }
         let lookup = node.lookup(options);
@@ -761,12 +686,7 @@ fn fish(
                     quote(&flag.description)
                 );
                 if flag.expects_value() && Some(&form) != negated.as_ref() {
-                    let values = fish_values(&Values::of(flag), function);
-                    if flag.value_arity == ValueArity::Optional {
-                        script.push_str(&values.replace(" -x", " -f").replace(" -r", ""));
-                    } else {
-                        script.push_str(&values);
-                    }
+                    script.push_str(&fish_values(&Values::of(flag), function));
                 }
                 script.push('\n');
             }
@@ -825,19 +745,11 @@ fn ps_short(nodes: &[Node], globals: &[GlobalFlag], options: ParseOptions) -> St
     );
     for node in nodes {
         for (name, value) in node.short_forms(globals, options) {
-            let action = if value != ValueArity::None {
-                "return [pscustomobject]@{ Flag = '-' + $char; Tail = $token.Substring($j + 1); Prefix = $token.Substring(0, $j + 1); Required = REQUIRED }"
+            let action = if value {
+                "return [pscustomobject]@{ Flag = '-' + $char; Tail = $token.Substring($j + 1); Prefix = $token.Substring(0, $j + 1) }"
             } else {
                 ""
             };
-            let action = action.replace(
-                "REQUIRED",
-                if value == ValueArity::Required {
-                    "$true"
-                } else {
-                    "$false"
-                },
-            );
             let _ = writeln!(
                 script,
                 "        {} {{ {action} }}",
@@ -924,7 +836,7 @@ fn powershell(
     if ($token -eq '--') {{ $literal = $true; $previous = $token; continue }}
     $parsedShort = & $short $token $path
     if ($parsedShort) {{
-      if (-not $parsedShort.Tail -and $parsedShort.Required) {{ $skip = $true; $pending = $parsedShort.Flag }}
+      if (-not $parsedShort.Tail) {{ $skip = $true; $pending = $parsedShort.Flag }}
       continue
     }}
     switch -CaseSensitive ("${{path}}:$token") {{
@@ -933,7 +845,7 @@ fn powershell(
         short = ps_short(nodes, globals, options)
     );
     for node in nodes {
-        for (_, form) in node.required_forms(globals, options) {
+        for (_, form) in node.value_forms(globals, options) {
             let _ = writeln!(
                 script,
                 "      {} {{ $skip = $true; $pending = $token }}",
@@ -960,7 +872,7 @@ fn powershell(
             );
         }
     }
-    script.push_str("      default {}\n    }\n  }\n  $extra = @(); $files = $false\n  if ($literal -or -not $wordToComplete.StartsWith('-')) {\n");
+    script.push_str("    }\n  }\n  $extra = @(); $files = $false\n  if ($literal -or -not $wordToComplete.StartsWith('-')) {\n");
     for node in nodes {
         for positional in node.positionals() {
             let action = match &positional.values {
@@ -981,33 +893,15 @@ fn powershell(
             );
         }
     }
-    script.push_str("  }\n  if ($files) { & $completeFiles $wordToComplete; return }\n  $candidates = @(); $metadata = [System.Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)\n  if (-not $literal) {\n    switch -CaseSensitive ($path) {\n");
+    script.push_str("  }\n  if ($files) { & $completeFiles $wordToComplete; return }\n  $candidates = @()\n  if (-not $literal) {\n    switch -CaseSensitive ($path) {\n");
     for node in nodes {
-        let metadata = node
-            .descriptions(globals, options)
-            .into_iter()
-            .map(|(name, description, command)| {
-                let description = if description.is_empty() {
-                    name.clone()
-                } else {
-                    description
-                };
-                format!(
-                    "$metadata[{}] = @({}, {})",
-                    ps_quote(&name),
-                    ps_quote(&description),
-                    ps_quote(if command { "Command" } else { "ParameterName" })
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("; ");
         let _ = writeln!(
             script,
-            "      {} {{ $candidates = @({}); {metadata} }}",
+            "      {} {{ $candidates = @({}) }}",
             ps_quote(&node.path),
             ps_words(&node.candidates(globals, options))
         );
     }
-    script.push_str("    }\n  }\n  $candidates += $extra\n  $matches = @($candidates | Where-Object { $_.StartsWith($wordToComplete, [StringComparison]::OrdinalIgnoreCase) })\n  if ($matches.Count) {\n    $matches | ForEach-Object { if ($metadata.ContainsKey($_)) { $info = $metadata[$_]; [System.Management.Automation.CompletionResult]::new($_, $_, $info[1], $info[0]) } else { [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_) } }\n  } else { & $noResults $wordToComplete }\n  }.GetNewClosure())\n}\n");
+    script.push_str("    }\n  }\n  $candidates += $extra\n  $matches = @($candidates | Where-Object { $_.StartsWith($wordToComplete, [StringComparison]::OrdinalIgnoreCase) })\n  if ($matches.Count) {\n    $matches | ForEach-Object { [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_) }\n  } else { & $noResults $wordToComplete }\n  }.GetNewClosure())\n}\n");
     script
 }
