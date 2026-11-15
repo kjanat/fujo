@@ -8,7 +8,7 @@ For command handlers and application setup, use [fujo](https://docs.rs/fujo).
 
 ```toml
 [dependencies]
-fujo-core = "0.2.0"
+fujo-core = "0.3.0"
 ```
 
 This crate requires Rust 1.99 or newer. It has no default features.

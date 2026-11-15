@@ -8,7 +8,7 @@ or another argument parser.
 
 ```toml
 [dependencies]
-fujo-output = "0.2.0"
+fujo-output = "0.3.0"
 ```
 
 This crate requires Rust 1.99 or newer. The default `terminal-activity` feature
@@ -51,7 +51,7 @@ you complete them or drop them.
 
 ```toml
 [dependencies]
-fujo-output = { version = "0.2.0", default-features = false }
+fujo-output = { version = "0.3.0", default-features = false }
 ```
 
 Spinners and progress handles still record events with `terminal-activity`

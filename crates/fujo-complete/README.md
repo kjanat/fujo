@@ -7,8 +7,8 @@ from `fujo-core` schemas. You can use it with Fujo or an existing argument parse
 
 ```toml
 [dependencies]
-fujo-complete = "0.2.0"
-fujo-core     = "0.2.0"
+fujo-complete = "0.3.0"
+fujo-core     = "0.3.0"
 ```
 
 This crate requires Rust 1.99 or newer. It has no Cargo feature flags.
