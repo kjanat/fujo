@@ -12,25 +12,36 @@
       ],
       "versionScope": "one-for-stream",
       "versionFiles": [
-        { "path": "README.md", "format": "text", "prefix": "fujo = \"", "suffix": "\"" },
-        { "path": "README.md", "format": "text", "prefix": "fujo = { version = \"", "suffix": "\"" },
-        { "path": "crates/fujo/README.md", "format": "text", "prefix": "fujo = \"", "suffix": "\"" },
-        { "path": "crates/fujo-core/README.md", "format": "text", "prefix": "fujo-core = \"", "suffix": "\"" },
-        { "path": "crates/fujo-output/README.md", "format": "text", "prefix": "fujo-output = \"", "suffix": "\"" },
+        {
+          "path": "README.md",
+          "format": "text",
+          "pattern": "^[ \\t]*fujo(?:-[a-z0-9-]+)?[ \\t]*=[ \\t]*(?:\\{[^\\r\\n}]*?\\bversion[ \\t]*=[ \\t]*)?[\"'](?<version>[^\"'\\r\\n]+)[\"']"
+        },
+        {
+          "path": "crates/fujo/README.md",
+          "format": "text",
+          "pattern": "^[ \\t]*fujo(?:-[a-z0-9-]+)?[ \\t]*=[ \\t]*(?:\\{[^\\r\\n}]*?\\bversion[ \\t]*=[ \\t]*)?[\"'](?<version>[^\"'\\r\\n]+)[\"']"
+        },
+        {
+          "path": "crates/fujo-core/README.md",
+          "format": "text",
+          "pattern": "^[ \\t]*fujo(?:-[a-z0-9-]+)?[ \\t]*=[ \\t]*(?:\\{[^\\r\\n}]*?\\bversion[ \\t]*=[ \\t]*)?[\"'](?<version>[^\"'\\r\\n]+)[\"']"
+        },
         {
           "path": "crates/fujo-output/README.md",
           "format": "text",
-          "prefix": "fujo-output = { version = \"",
-          "suffix": "\""
+          "pattern": "^[ \\t]*fujo(?:-[a-z0-9-]+)?[ \\t]*=[ \\t]*(?:\\{[^\\r\\n}]*?\\bversion[ \\t]*=[ \\t]*)?[\"'](?<version>[^\"'\\r\\n]+)[\"']"
         },
-        { "path": "crates/fujo-error/README.md", "format": "text", "prefix": "fujo-error = \"", "suffix": "\"" },
+        {
+          "path": "crates/fujo-error/README.md",
+          "format": "text",
+          "pattern": "^[ \\t]*fujo(?:-[a-z0-9-]+)?[ \\t]*=[ \\t]*(?:\\{[^\\r\\n}]*?\\bversion[ \\t]*=[ \\t]*)?[\"'](?<version>[^\"'\\r\\n]+)[\"']"
+        },
         {
           "path": "crates/fujo-complete/README.md",
           "format": "text",
-          "prefix": "fujo-complete = \"",
-          "suffix": "\""
-        },
-        { "path": "crates/fujo-complete/README.md", "format": "text", "prefix": "fujo-core     = \"", "suffix": "\"" }
+          "pattern": "^[ \\t]*fujo(?:-[a-z0-9-]+)?[ \\t]*=[ \\t]*(?:\\{[^\\r\\n}]*?\\bversion[ \\t]*=[ \\t]*)?[\"'](?<version>[^\"'\\r\\n]+)[\"']"
+        }
       ],
       "mustPublish": [
         "pkg:cargo/fujo-error",
