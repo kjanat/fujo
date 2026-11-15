@@ -1,5 +1,14 @@
 # Fujo
 
+[![fujo on crates.io](https://img.shields.io/crates/v/fujo?label=fujo&logo=rust&labelColor=B7410E&color=black)][crates-fujo]
+[![fujo-core on crates.io](https://img.shields.io/crates/v/fujo-core?label=fujo-core&logo=rust&labelColor=B7410E&color=black)][crates-fujo-core]
+[![fujo-complete on crates.io](https://img.shields.io/crates/v/fujo-complete?label=fujo-complete&logo=rust&labelColor=B7410E&color=black)][crates-fujo-complete]
+[![fujo-output on crates.io](https://img.shields.io/crates/v/fujo-output?label=fujo-output&logo=rust&labelColor=B7410E&color=black)][crates-fujo-output]
+[![fujo-error on crates.io](https://img.shields.io/crates/v/fujo-error?label=fujo-error&logo=rust&labelColor=B7410E&color=black)][crates-fujo-error]
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](https://github.com/kjanat/fujo/blob/master/LICENSE)
+[![CI](https://github.com/kjanat/fujo/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/kjanat/fujo/actions/workflows/ci.yml)
+[![Publish crates](https://github.com/kjanat/fujo/actions/workflows/publish.yml/badge.svg)](https://github.com/kjanat/fujo/actions/workflows/publish.yml)
+
 Fujo builds command-line applications in Rust. Declare inputs with their types
 and sources, then receive their resolved values in the command handler.
 
@@ -808,3 +817,9 @@ and creates a signed `v<version>` tag and a GitHub Release with generated notes.
 
 `publish.yml` retrieves the `crates-io` credential through Beepboop. The `promote`
 operation needs a runtime grant for that credential.
+
+[crates-fujo]: https://crates.io/crates/fujo
+[crates-fujo-core]: https://crates.io/crates/fujo-core
+[crates-fujo-complete]: https://crates.io/crates/fujo-complete
+[crates-fujo-output]: https://crates.io/crates/fujo-output
+[crates-fujo-error]: https://crates.io/crates/fujo-error
