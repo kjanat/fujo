@@ -834,7 +834,10 @@ fn zsh_displays_escaped_flag_and_command_descriptions() {
     let description = "Say 'hi': $x [ok] \\ yes";
     let app = cli("demo")
         .flag(flag::string("format").describe(description))
-        .command(command("build").describe(description));
+        // Two commands: a single match would be inserted instead of listed,
+        // and Zsh offers no option before a `-`.
+        .command(command("build").describe(description))
+        .command(command("check").describe(description));
     let dir = workspace();
     let checker = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../scripts/check-completion-zsh.py");
