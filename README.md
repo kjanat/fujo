@@ -560,6 +560,7 @@ and fall back to Bash. Applications can call
 
 Choices complete their declared values. Paths complete file names. Free-text
 inputs provide no suggestions. After `--`, completion treats words as arguments.
+Bash scripts support Bash 3.2 and newer, including path completion.
 Zsh scripts work when sourced or installed as `_mycli` in `fpath`.
 
 PowerShell completes paths, including `--config=PATH`. Some versions, including
@@ -567,6 +568,117 @@ PowerShell completes paths, including `--config=PATH`. Some versions, including
 nonempty text and unmatched choices unchanged; empty free-text input may fall
 back to file completion. The script detects support for empty results and uses
 it to suppress that fallback where possible.
+
+### Completion-only use
+
+Use `fujo-core` and `fujo-complete` with an existing parser. Their schema builders
+need no `fujo` runtime:
+
+```rust
+use fujo_core::{arg, flag};
+use fujo_core::command::{CommandSchema, ProgramSchema};
+use fujo_core::parse::ParseOptions;
+use fujo_complete::{Shell, generate_with_options};
+
+let profiles = vec!["compact".to_owned(), "pretty".to_owned()];
+let program = ProgramSchema::new("formatter")
+    .completion_version("1.2.3")
+    .default(CommandSchema::new("format")
+        .flag(flag::boolean("help").alias("h").into_schema())
+        .flag(flag::enumeration("profile", profiles).into_schema())
+        .arg(arg::path("files").variadic().optional().into_schema()));
+program.validate().expect("valid completion schema");
+let script = generate_with_options(
+    &program, Shell::Bash, ParseOptions { case_parity: false },
+);
+```
+
+`ProgramSchema::new` starts with `Builtins::none()` and no configuration or
+completion commands. Enable built-ins explicitly with `.builtins(...)`,
+`.config(true)`, or `.completions(true)` when the external parser supports them.
+`.completion_version(...)` only stamps the generated header; `.version(...)`
+also enables `--version -V`. Headers fall back to `.version(...)` when no
+completion version is set. `ParseOptions::default()` accepts kebab-case and
+camelCase spellings of long options; disable case parity to match a parser
+that only accepts declared spellings. Single-character aliases stay case-sensitive.
+
+For an external parser that accepts unique long-option prefixes, use
+`generate_with_config` with `CompletionOptions::abbreviate_long_options`:
+
+```rust
+# use fujo_core::command::ProgramSchema;
+# use fujo_core::parse::ParseOptions;
+# let program = ProgramSchema::new("formatter");
+use fujo_complete::{CompletionOptions, Shell, generate_with_config};
+let script = generate_with_config(&program, Shell::Fish, CompletionOptions {
+    parse: ParseOptions { case_parity: false },
+    abbreviate_long_options: true,
+});
+```
+
+This lets `--for json` select `--format` and `--g bash` select
+`--generate-completions` when those prefixes identify one option in the current
+command. Exact names take precedence over prefixes, and aliases of the same
+option count as one target. Ambiguous prefixes do not select a value completer.
+Only full visible names are suggested; hidden aliases still accept values.
+The setting is opt-in and applies to completion generation for external parsers.
+Fujo's parser continues to require complete option spellings.
+
+`Input::choices`, `flag::enumeration`, `arg::enumeration`, and the value parsers
+accept vectors, slices, iterators, and arrays. Empty choice lists are rejected
+when validating the schema. The same choices reach parsing, help, and completions.
+
+PowerShell 7.7 has an upstream completion limitation after `--`: for a word such
+as `-d`, it does not invoke registered native argument completers. Prefixing the
+path with `./`, as in `formatter -- ./-d`, reaches the completer. This is tracked
+in [#24](https://github.com/kjanat/fujo/issues/24); the shell test retains the
+reproduction as an ignored test and separately checks Fujo's callback directly.
+
+### Optional option values and input relationships
+
+An option can take an optional attached value:
+
+```rust
+use fujo::flag;
+
+let color = flag::enumeration("color", ["auto", "always", "never"])
+    .alias("C")
+    .optional_value("auto".to_owned());
+```
+
+`--color` and `-C` select `auto`. Explicit values attach as `--color=always`
+or `-Calways`; the next word remains a positional. Omitting the option leaves
+it unset unless `.default(...)` supplies an ordinary default. The schema exposes
+`ValueArity::{None, Required, Optional}`, and all completion generators respect
+whether a separate word is consumed.
+
+Declare relationships using input handles before registering them:
+
+```rust
+use fujo::{arg, flag, Command};
+
+let files = arg::path("files").variadic().optional();
+let stdin = flag::boolean("stdin").conflicts_with(&files);
+let in_place = flag::boolean("in-place").requires(&files);
+let spaces = flag::boolean("use-spaces");
+let tabs = flag::boolean("use-tabs").conflicts_with(&spaces);
+let command = Command::new("format").inputs((files, stdin, in_place, spaces, tabs));
+```
+
+Conflicts are mutual: declaring either direction rejects an invocation selecting
+both inputs. Requirements apply when their declaring input is selected. Explicit
+CLI, environment, configuration, stdin, and prompt values count as selections;
+defaults do not. Aliases resolve to the same canonical input. Relationships are
+available in schema metadata and work with typed and dynamic commands. Invalid
+or unregistered relationship targets fail schema validation.
+
+Native `run`, `run_os_with`, and their async counterparts preserve OS strings for
+path inputs, including non-UTF-8 Unix filenames. Text inputs require UTF-8.
+Non-Unicode paths remain native `PathBuf` values and have no default JSON
+representation. Plugins that transform such arguments can implement
+`Plugin::before_parse_os`; its default adapter uses the existing UTF-8
+`before_parse` hook. Explicitly splitting non-Unicode path collections requires
+Unicode text; ordinary whole-path and variadic inputs preserve filenames.
 
 ## Configuration and testing
 

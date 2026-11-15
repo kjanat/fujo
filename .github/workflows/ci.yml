@@ -42,6 +42,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install --no-install-recommends -y fish zsh;
           command -v bash pwsh
       - run: cargo test --workspace --all-features --locked
+      - name: Bash 3.2 path completion
+        run: cargo test -p fujo --all-features --test completion bash_32_completes_paths_with_spaces -- --ignored
       - run: cargo build -p fujo --example terminal --example async_build --locked
       - run: python scripts/check-terminal.py target/debug/examples/terminal target/debug/examples/async_build
   reference:
@@ -90,4 +92,4 @@ jobs:
         with: { persist-credentials: false }
       - uses: $/.github/actions/setup
       - uses: $/.github/actions/check-release
-      - run: cargo package --workspace --locked --all-features --registry crates-io
+      - run: python scripts/check-packages.py

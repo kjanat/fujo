@@ -168,14 +168,24 @@ pub fn command_help(
                     .iter()
                     .filter(|a| !a.hidden)
                     .map(|a| crate::parse::spelling(&a.name))
-                    .chain(std::iter::once(format!(
-                        "--{}",
-                        crate::parse::canonical_flag_name_with(&lookup, flag)
+                    .chain(std::iter::once(crate::parse::spelling(
+                        &crate::parse::canonical_flag_name_with(&lookup, flag),
                     )))
                     .chain(flag.negated_name.as_deref().map(crate::parse::spelling))
+                    .map(|name| {
+                        if flag.value_arity == crate::schema::ValueArity::Optional {
+                            let separator = if name.starts_with("--") { "=" } else { "" };
+                            format!(
+                                "{name}[{separator}<{}>]",
+                                flag.value_hint.as_deref().unwrap_or("value")
+                            )
+                        } else {
+                            name
+                        }
+                    })
                     .collect::<Vec<_>>()
                     .join(", ");
-                let hint = if flag.expects_value() {
+                let hint = if flag.value_arity == crate::schema::ValueArity::Required {
                     format!(" <{}>", flag.value_hint.as_deref().unwrap_or("value"))
                 } else {
                     String::new()
@@ -244,6 +254,22 @@ fn description(input: &InputSchema) -> String {
     }
     if !input.enum_values.is_empty() {
         notes.push(format!("choices: {}", input.enum_values.join(", ")));
+    }
+    for (label, targets) in [
+        ("conflicts with", &input.conflicts),
+        ("requires", &input.requires),
+    ] {
+        if !targets.is_empty() {
+            let names = targets
+                .iter()
+                .map(|target| match target.surface {
+                    crate::schema::Surface::Flag => crate::parse::spelling(&target.name),
+                    crate::schema::Surface::Arg => format!("<{}>", target.name),
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            notes.push(format!("{label}: {names}"));
+        }
     }
     if !input.env_vars.is_empty() {
         notes.push(format!("env: {}", input.env_vars.join(", ")));
