@@ -77,7 +77,7 @@ dependencies = [
 
 [[package]]
 name = "fujo"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "fujo-complete",
  "fujo-core",
@@ -91,14 +91,14 @@ dependencies = [
 
 [[package]]
 name = "fujo-complete"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "fujo-core",
 ]
 
 [[package]]
 name = "fujo-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "chrono",
  "fujo-error",
@@ -110,7 +110,7 @@ dependencies = [
 
 [[package]]
 name = "fujo-error"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -118,7 +118,7 @@ dependencies = [
 
 [[package]]
 name = "fujo-output"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "fujo-error",
  "serde",
