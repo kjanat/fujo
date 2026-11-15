@@ -76,7 +76,7 @@ cargo add fujo
 
 ```toml
 [dependencies]
-fujo = "0.1.0"
+fujo = "0.2.0"
 ```
 
 Fujo requires Rust 1.99 or newer. `rust-toolchain.toml` pins the development
@@ -756,13 +756,13 @@ terminal output. See [CONTRIBUTING.md](CONTRIBUTING.md) for build and test comma
 
 ## Workspace crates
 
-| Crate           | Responsibility                                                               |
-| --------------- | ---------------------------------------------------------------------------- |
-| `fujo`          | Public API, command execution, middleware, plugins, help, and native runtime |
-| `fujo-core`     | Typed input builders, parsing, resolution, provenance, and schema metadata   |
-| `fujo-output`   | `Write` destinations, capture, tables, colors, and activity guards           |
-| `fujo-complete` | Bash, Zsh, Fish, and PowerShell completion generation                        |
-| `fujo-error`    | Shared structured errors and error categories                                |
+| Crate                                             | Responsibility                                                               |
+| ------------------------------------------------- | ---------------------------------------------------------------------------- |
+| [`fujo`](crates/fujo/README.md)                   | Public API, command execution, middleware, plugins, help, and native runtime |
+| [`fujo-core`](crates/fujo-core/README.md)         | Typed input builders, parsing, resolution, provenance, and schema metadata   |
+| [`fujo-output`](crates/fujo-output/README.md)     | `Write` destinations, capture, tables, colors, and activity guards           |
+| [`fujo-complete`](crates/fujo-complete/README.md) | Bash, Zsh, Fish, and PowerShell completion generation                        |
+| [`fujo-error`](crates/fujo-error/README.md)       | Shared structured errors and error categories                                |
 
 Core receives environment and filesystem data through explicit inputs. Output
 depends on the error crate and works without the parser or resolver. `fujo`
@@ -788,7 +788,7 @@ prompt implementation:
 
 ```toml
 [dependencies]
-fujo = { version = "0.1.0", default-features = false }
+fujo = { version = "0.2.0", default-features = false }
 ```
 
 Add `features = ["url", "chrono"]` to enable those integrations. Cargo combines

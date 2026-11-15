@@ -5,7 +5,7 @@ authors.workspace      = true
 edition.workspace      = true
 rust-version.workspace = true
 description            = "Bash, Zsh, Fish, and PowerShell completions for Fujo commands"
-readme.workspace       = true
+readme                 = "README.md"
 repository.workspace   = true
 license.workspace      = true
 

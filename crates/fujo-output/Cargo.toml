@@ -5,7 +5,7 @@ authors.workspace      = true
 edition.workspace      = true
 rust-version.workspace = true
 description            = "Output writers, tables, spinners, and progress bars for Fujo"
-readme.workspace       = true
+readme                 = "README.md"
 repository.workspace   = true
 license.workspace      = true
 

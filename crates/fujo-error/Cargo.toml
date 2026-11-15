@@ -5,7 +5,7 @@ authors.workspace      = true
 edition.workspace      = true
 rust-version.workspace = true
 description            = "Structured errors shared by Fujo crates"
-readme.workspace       = true
+readme                 = "README.md"
 repository.workspace   = true
 license.workspace      = true
 
