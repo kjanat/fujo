@@ -604,7 +604,7 @@ fn posix(
         )
     } else {
         format!(
-            "#compdef {}\n{function}() {{\n  local cur=\"$words[CURRENT]\" prev=\"$words[CURRENT-1]\" path='' token i skip=0 pos=0 literal=0 files=0\n  local pending='' short_flag short_tail short_prefix short_char short_required delimiter\n  local -a candidates extra descriptions\n  for ((i=2; i<CURRENT; i++)); do\n",
+            "#compdef {}\n{function}() {{\n  local cur=\"$words[CURRENT]\" prev=\"$words[CURRENT-1]\" path='' token i skip=0 pos=0 literal=0 files=0\n  local pending='' short_flag short_tail short_prefix short_char short_required delimiter\n  local -a candidates extra commands flags\n  for ((i=2; i<CURRENT; i++)); do\n",
             program.name
         )
     };
@@ -682,36 +682,41 @@ fn posix(
     }
     script.push_str("  fi\n  if (( ! literal )); then\n  case \"$path\" in\n");
     for node in nodes {
-        let display = if bash {
-            String::new()
+        let matches = if bash {
+            format!("candidates=({})", words(&node.candidates(globals, options)))
         } else {
-            let descriptions = node
+            // `_describe` takes `name:description` specs, reads `\` as an
+            // escape in both parts, and lists the spellings of one flag on
+            // one line.
+            let (commands, flags): (Vec<_>, Vec<_>) = node
                 .descriptions(globals, options)
                 .into_iter()
-                .map(|(name, description, _)| {
-                    if description.is_empty() {
-                        name
-                    } else {
-                        format!("{name} -- {description}")
-                    }
-                })
-                .collect::<Vec<_>>();
-            format!("; descriptions=({})", words(&descriptions))
+                .partition(|(_, _, command)| *command);
+            let specs = |entries: Vec<(String, String, bool)>| {
+                let specs = entries
+                    .into_iter()
+                    .map(|(name, description, _)| {
+                        let name = name.replace('\\', "\\\\").replace(':', "\\:");
+                        if description.is_empty() {
+                            name
+                        } else {
+                            format!("{name}:{}", description.replace('\\', "\\\\"))
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                words(&specs)
+            };
+            format!("commands=({}); flags=({})", specs(commands), specs(flags))
         };
-        let _ = writeln!(
-            script,
-            "    {}) candidates=({}){display} ;;",
-            quote(&node.path),
-            words(&node.candidates(globals, options))
-        );
+        let _ = writeln!(script, "    {}) {matches} ;;", quote(&node.path));
     }
-    script.push_str("  esac\n  fi\n  candidates+=(\"${extra[@]}\")\n");
+    script.push_str("  esac\n  fi\n");
     if bash {
-        script.push_str("  COMPREPLY=(); for token in \"${candidates[@]}\"; do [[ $token == \"$cur\"* ]] && COMPREPLY+=(\"$token\"); done\n  if (( files )); then\n    compopt -o filenames 2>/dev/null\n    while IFS= read -r token; do COMPREPLY+=(\"$token\"); done < <(compgen -f -- \"$cur\")\n  fi\n}\n");
+        script.push_str("  candidates+=(\"${extra[@]}\")\n  COMPREPLY=(); for token in \"${candidates[@]}\"; do [[ $token == \"$cur\"* ]] && COMPREPLY+=(\"$token\"); done\n  if (( files )); then\n    compopt -o filenames 2>/dev/null\n    while IFS= read -r token; do COMPREPLY+=(\"$token\"); done < <(compgen -f -- \"$cur\")\n  fi\n}\n");
         let _ = writeln!(script, "complete -F {function} -- {}", quote(&program.name));
     } else {
         script.push_str(
-            "  descriptions+=(\"${extra[@]}\")\n  compadd -d descriptions -- \"${candidates[@]}\"\n  (( files )) && _files\n  return 0\n}\n",
+            "  extra=(\"${(@)${(@)extra//\\\\/\\\\\\\\}//:/\\\\:}\")\n  (( $#commands )) && _describe -t commands 'command' commands\n  (( $#flags )) && _describe -t options 'option' flags\n  (( $#extra )) && _describe -t values 'value' extra\n  (( files )) && _files\n  return 0\n}\n",
         );
         let _ = writeln!(
             script,

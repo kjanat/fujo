@@ -248,7 +248,7 @@ fn zsh_completes_on_the_first_autoloaded_call_and_every_later_one() {
     std::fs::create_dir(&functions).unwrap();
     let script = generate(files_app().schema(), Shell::Zsh);
     std::fs::write(functions.join("_demo"), &script).unwrap();
-    let stubs = "compadd() { local p=''; while [[ $1 != -- && $# -gt 0 ]]; do [[ $1 == -P ]] && { p=$2; shift; }; shift; done; shift; for w in \"$@\"; do print -r -- \"$p$w\"; done; }\ncompset() { print -r -- \"compset $*\"; }\n_files() { print -r -- FILES; }\ncompdef() { print -r -- \"compdef $*\"; }\n";
+    let stubs = "compadd() { local p=''; while [[ $1 != -- && $# -gt 0 ]]; do [[ $1 == -P ]] && { p=$2; shift; }; shift; done; shift; for w in \"$@\"; do print -r -- \"$p$w\"; done; }\ncompset() { print -r -- \"compset $*\"; }\n_files() { print -r -- FILES; }\ncompdef() { print -r -- \"compdef $*\"; }\n_describe() { local spec; for spec in \"${(@P)${@[-1]}}\"; do print -r -- \"${spec%%:*}\"; done; }\n";
     let probe = format!(
         "{stubs}fpath=({} $fpath); autoload -Uz _demo\nprint '== out'; words=(demo pack --out=in); CURRENT=3; _demo\nprint '== mode'; words=(demo pack input.txt ''); CURRENT=4; _demo\nprint '== label'; words=(demo pack --label ''); CURRENT=4; _demo; print status=$?\nprint '== source'; source {}\n",
         functions.display(),
@@ -852,6 +852,82 @@ fn zsh_displays_escaped_flag_and_command_descriptions() {
     let displays: Vec<String> = serde_json::from_str(&output).unwrap();
     for display in displays {
         assert!(display.contains(description), "{display:?}");
+    }
+}
+
+/// What Zsh's line editor prints for `buffer` after `widget`, through zpty.
+#[cfg(all(feature = "shell-tests", unix))]
+fn zsh_editor(app: &fujo::Cli, buffer: &str, widget: &str) -> String {
+    let dir = workspace();
+    std::fs::create_dir(dir.path().join("functions")).unwrap();
+    std::fs::write(
+        dir.path().join("functions/_demo"),
+        generate(app.schema(), Shell::Zsh),
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("buffer"), buffer).unwrap();
+    std::fs::write(dir.path().join("widget"), widget).unwrap();
+    // `"DO""NE"` echoes with its quotes, so only the widget prints `DONE`.
+    let probe = r#"
+zmodload zsh/zpty
+zpty -b child zsh -f -i
+zpty -w child "PROMPT=''; fpath=(\$PWD/functions \$fpath); autoload -Uz compinit; compinit -D -u; probe() { BUFFER=\$(<buffer); CURSOR=\$#BUFFER; eval \"\$(<widget)\"; print -r -- \"DO\"\"NE\"; }; zle -N probe; bindkey '^X' probe"
+zpty -w -n child $'\x18'
+output=''
+for ((i = 0; i < 400; i++)); do
+  if zpty -rt child line; then
+    output+=$line
+    [[ $output == *DONE* ]] && break
+  else
+    sleep 0.05
+  fi
+done
+zpty -d child
+print -r -- "$output"
+"#;
+    run_in(dir.path(), "zsh", &["-f"], probe)
+}
+
+#[cfg(all(feature = "shell-tests", unix))]
+#[test]
+fn zsh_lists_the_spellings_of_one_flag_on_one_line() {
+    let app = cli("demo")
+        .flag(flag::boolean("color").alias("C").describe("Use color"))
+        .flag(flag::boolean("norc").describe("Skip the rc file"));
+    let listing = zsh_editor(&app, "demo -", "zle list-choices; zle -R");
+    assert!(listing.contains("DONE"), "{listing:?}");
+    assert_eq!(listing.matches("Use color").count(), 1, "{listing:?}");
+    let line = listing
+        .lines()
+        .find(|line| line.contains("Use color"))
+        .unwrap_or_default();
+    assert!(
+        line.contains("--color") && line.contains("-C "),
+        "{listing:?}"
+    );
+    assert!(listing.contains("Skip the rc file"), "{listing:?}");
+}
+
+#[cfg(all(feature = "shell-tests", unix))]
+#[test]
+fn zsh_lists_and_inserts_choices_holding_colons_and_backslashes() {
+    let app =
+        cli("demo").default(command("run").arg(fujo::arg::enumeration("mode", ["a:b", "c\\d"])));
+    let listing = zsh_editor(&app, "demo ", "zle list-choices; zle -R");
+    assert!(
+        listing.contains("a:b") && listing.contains("c\\d"),
+        "{listing:?}"
+    );
+    for (buffer, expected) in [("demo a", "demo a:b"), ("demo c", "demo c\\\\d")] {
+        let output = zsh_editor(
+            &app,
+            buffer,
+            "zle complete-word; print -r -- \"BUFFER=$BUFFER\"",
+        );
+        assert!(
+            output.contains(&format!("BUFFER={expected} ")),
+            "{output:?}"
+        );
     }
 }
 
