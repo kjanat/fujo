@@ -7,7 +7,7 @@ their resolved values in a command handler.
 
 ```toml
 [dependencies]
-fujo = "0.2.0"
+fujo = "0.3.0"
 ```
 
 Fujo requires Rust 1.99 or newer.

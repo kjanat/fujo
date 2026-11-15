@@ -76,7 +76,7 @@ cargo add fujo
 
 ```toml
 [dependencies]
-fujo = "0.2.0"
+fujo = "0.3.0"
 ```
 
 Fujo requires Rust 1.99 or newer. `rust-toolchain.toml` pins the development
@@ -788,7 +788,7 @@ prompt implementation:
 
 ```toml
 [dependencies]
-fujo = { version = "0.2.0", default-features = false }
+fujo = { version = "0.3.0", default-features = false }
 ```
 
 Add `features = ["url", "chrono"]` to enable those integrations. Cargo combines
